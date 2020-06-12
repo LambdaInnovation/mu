@@ -1,18 +1,20 @@
 use glium::Display;
-use glutin::{Event, EventsLoop};
-use shrev::{EventChannel, ReaderId};
+use glutin::event;
+use glutin::event_loop;
+use specs::shrev::{EventChannel, ReaderId};
 use specs::prelude::*;
 
 use crate::client::*;
 use crate::game_loop::Module;
+use std::rc::Rc;
 
 pub struct EventLoopSystem {
-    events_loop: EventsLoop,
+    events_loop: EventLoop,
     events: Vec<Event>,
 }
 
 impl EventLoopSystem {
-    pub fn new(events_loop: EventsLoop) -> Self {
+    pub fn new(events_loop: EventLoop) -> Self {
         Self {
             events_loop,
             events: Vec::with_capacity(128),
@@ -21,14 +23,18 @@ impl EventLoopSystem {
 }
 
 impl<'a> System<'a> for EventLoopSystem {
-    type SystemData = (Write<'a, EventChannel<Event>>);
+    type SystemData = Write<'a, EventChannel<Event>>;
 
     fn run(&mut self, mut event_handler: Self::SystemData) {
         let events = &mut self.events;
         let events_loop = &mut self.events_loop;
-        events_loop.poll_events(|event| {
-            events.push(event);
-        });
+        // !! TODO: 这里的用法完全变了 event_loop 变成了最外层循环 需要调整
+        // events_loop.run(|event, _, control_flow| {
+        //     match event.to_static() {
+        //         Some(static_event) => events.push(static_event),
+        //         _ => ()
+        //     };
+        // });
         event_handler.drain_vec_write(events);
     }
 }
@@ -49,12 +55,12 @@ impl<'a> System<'a> for SysClientInfo {
     fn run(&mut self, (events, mut client_info): Self::SystemData) {
         for event in events.read(&mut self.event_reader.as_mut().unwrap()) {
             match event {
-                glutin::Event::WindowEvent { ref event, .. } => {
+                Event::WindowEvent { ref event, .. } => {
                     match event {
-                        glutin::WindowEvent::Focused(focused) => {
+                        event::WindowEvent::Focused(focused) => {
                             client_info.is_focused = *focused;
                         }
-                        glutin::WindowEvent::Resized(sz) => {
+                        event::WindowEvent::Resized(sz) => {
                             //                            info!("Resized!");
                             client_info.width = sz.width as u32;
                             client_info.height = sz.height as u32;
@@ -123,7 +129,7 @@ pub struct WindowModule {
 }
 
 impl WindowModule {
-    pub fn new(display: Rc<Display>, event_loop: EventsLoop) -> Self {
+    pub fn new(display: Rc<Display>, event_loop: EventLoop) -> Self {
         Self {
             display,
             event_loop: Some(event_loop),

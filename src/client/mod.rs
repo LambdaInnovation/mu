@@ -4,9 +4,11 @@ pub mod window;
 
 use crate::game_loop::Module;
 use glium::Display;
-use glutin::EventsLoop;
 use std::cell::RefCell;
 use std::rc::Rc;
+
+pub type Event = glutin::event::Event<'static, ()>;
+pub type EventLoop = glutin::event_loop::EventLoop<()>;
 
 thread_local!(
 static global_display: RefCell<Option<Rc<Display>>> = RefCell::new(None)
@@ -25,20 +27,20 @@ pub struct ClientInfo {
 
 pub struct ClientModule {
     display: Rc<Display>,
-    events_loop: Option<EventsLoop>,
+    events_loop: Option<EventLoop>,
 }
 
 impl ClientModule {
     pub fn new(title: String) -> Self {
-        let (display, events_loop) = {
-            let events_loop = glutin::EventsLoop::new();
-            let wb = glutin::WindowBuilder::new().with_title(title.clone());
+        let (display, event_loop) = {
+            let event_loop = EventLoop::new();
+            let wb = glutin::window::WindowBuilder::new().with_title(title.clone());
             let cb = glutin::ContextBuilder::new()
                 //            .with_vsync(true)
                 .with_srgb(true);
             (
-                Rc::new(glium::Display::new(wb, cb, &events_loop).unwrap()),
-                events_loop,
+                Rc::new(glium::Display::new(wb, cb, &event_loop).unwrap()),
+                event_loop,
             )
         };
 
@@ -46,13 +48,13 @@ impl ClientModule {
 
         ClientModule {
             display,
-            events_loop: Some(events_loop),
+            events_loop: Some(event_loop),
         }
     }
 }
 
 impl Module for ClientModule {
-    fn get_submodules(&mut self) -> Vec<Box<Module>> {
+    fn get_submodules(&mut self) -> Vec<Box<dyn Module>> {
         vec![
             Box::new(graph::GraphModule::new(self.display.clone())),
             Box::new(window::WindowModule::new(

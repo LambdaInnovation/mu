@@ -2,15 +2,16 @@ use super::window::CursorGrab;
 use crate::input;
 use crate::input::RawInputData;
 use crate::InsertInfo;
+use crate::client::{Event, EventLoop};
 use glium::*;
-use glutin::*;
 use imgui::*;
 use imgui_glium_renderer::Renderer;
 use imgui_winit_support::*;
-// use shrev::EventChannel;
+use specs::shrev::EventChannel;
 use specs::prelude::*;
 use std::rc::Rc;
 use std::time::*;
+use glutin::window;
 
 pub const DEP_SETUP: &str = "imgui_setup";
 pub const DEP_TEARDOWN: &str = "imgui_teardown";
@@ -192,7 +193,8 @@ impl Module for DebugUIModule {
 
         let mut ctx = imgui::Context::create();
         ctx.set_ini_filename(None);
-        let hidpi_factor = self.display.gl_window().window().get_hidpi_factor();
+        // let hidpi_factor = self.display.gl_window().window().get_hidpi_factor();
+        let hidpi_factor = 1.0;
         let font_size = (13.0 * hidpi_factor) as f32;
 
         ctx.fonts().add_font(&[
@@ -235,7 +237,7 @@ impl Module for DebugUIModule {
         );
     }
 
-    fn get_submodules(&mut self) -> Vec<Box<Module>> {
-        vec![Box::new(perf::PerfModule::new())]
-    }
+    // fn get_submodules(&mut self) -> Vec<Box<Module>> {
+    //     vec![Box::new(perf::PerfModule::new())]
+    // }
 }

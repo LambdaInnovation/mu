@@ -1,16 +1,16 @@
 pub use glium::uniforms;
-// TODO: pub export nalgebra exports lots of useless stuffs
 pub use cgmath::num_traits::*;
+pub use cgmath;
 use std::f32::consts;
 use std::ops::{Div, Mul, Sub};
 
 pub type Float = f32;
 
-// pub type Vec3 = Vector3<Float>;
-// pub type Vec2 = Vector2<Float>;
-// pub type Mat4 = Matrix4<Float>;
+pub type Vec3 = cgmath::Vector3<Float>;
+pub type Vec2 = cgmath::Vector2<Float>;
+pub type Mat4 = cgmath::Matrix4<Float>;
 
-// pub type Quaternion = nalgebra::Quaternion<Float>;
+pub type Quaternion = cgmath::Quaternion<Float>;
 // #[allow(dead_code)]
 // pub type UnitQuaternion = nalgebra::UnitQuaternion<Float>;
 // pub type Rotation3 = nalgebra::Rotation3<Float>;
