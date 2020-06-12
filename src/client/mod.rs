@@ -26,7 +26,6 @@ pub struct ClientInfo {
 }
 
 pub struct ClientModule {
-    display: Rc<Display>,
     events_loop: Option<EventLoop>,
 }
 
@@ -54,6 +53,10 @@ impl ClientModule {
 }
 
 impl Module for ClientModule {
+    fn on_start(&mut self, start_data: &mut crate::StartData) {
+        global_display.with(|r| *r.borrow_mut() = Some(display.clone()));
+    }
+
     fn get_submodules(&mut self) -> Vec<Box<dyn Module>> {
         vec![
             Box::new(graph::GraphModule::new(self.display.clone())),

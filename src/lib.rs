@@ -1,6 +1,9 @@
 #[macro_use]
 extern crate log;
 
+use std::rc::Rc;
+use glium::Display;
+
 pub mod timing;
 pub mod game_loop;
 pub mod util;
@@ -224,6 +227,7 @@ impl InitData {
 
 pub struct StartData<'a> {
     pub world: &'a mut specs::World,
+    pub display: Rc<Display>
 }
 
 #[cfg(test)]

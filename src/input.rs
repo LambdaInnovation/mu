@@ -109,10 +109,10 @@ impl RawInputData {
 
     pub fn on_window_event(&mut self, event: &glt::event::WindowEvent) {
         match event {
-            glt::WindowEvent::MouseInput { state, button, .. } => {
+            glt::event::WindowEvent::MouseInput { state, button, .. } => {
                 self.mouse_btns.on_element_state(*button, *state);
             }
-            glt::WindowEvent::KeyboardInput {
+            glt::event::WindowEvent::KeyboardInput {
                 input:
                     glt::KeyboardInput {
                         state,

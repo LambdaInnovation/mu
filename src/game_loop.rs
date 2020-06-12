@@ -1,17 +1,23 @@
 use crate::timing::Time;
 // use crate::util;
-use glutin::event::Event;
 use log::LevelFilter;
 // use shrev::EventChannel;
 use simplelog::{CombinedLogger, Config, TermLogger, TerminalMode};
 use specs::prelude::*;
 use std::path::Path;
 
-pub struct GameLoop<'a, 'b> {
+use std::rc::Rc;
+use glium::Display;
+pub type Event = glutin::event::Event<'static, ()>;
+pub type EventLoop = glutin::event_loop::EventLoop<()>;
+
+pub struct GameLoop {
     world: World,
-    dispatcher: Option<Dispatcher<'a, 'b>>,
+    dispatcher: Option<Dispatcher<'static, 'static>>,
     running: bool,
     modules: Vec<Box<Module>>,
+    display: Rc<Display>,
+    event_loop: Option<EventLoop>
     // event_reader_id: ReaderId<Event>,
 }
 
@@ -29,11 +35,7 @@ pub struct FpsInfo {
     pub fps: f32,
 }
 
-pub struct StartData<'a> {
-    world: &'a mut specs::World,
-}
-
-impl<'a, 'b> GameLoop<'a, 'b> {
+impl GameLoop {
     pub fn new(name: String) -> Self {
         CombinedLogger::init(vec![TermLogger::new(
             LevelFilter::Info,
@@ -51,12 +53,25 @@ impl<'a, 'b> GameLoop<'a, 'b> {
 
         // let event_reader_id =
         //     world.exec(|mut ev: Write<'_, EventChannel<Event>>| ev.register_reader());
+        let (display, event_loop) = {
+            let event_loop = EventLoop::new();
+            let wb = glutin::window::WindowBuilder::new().with_title(name.clone());
+            let cb = glutin::ContextBuilder::new()
+                //            .with_vsync(true)
+                .with_srgb(true);
+            (
+                Rc::new(glium::Display::new(wb, cb, &event_loop).unwrap()),
+                event_loop,
+            )
+        };
 
         GameLoop {
             world,
             dispatcher: None,
             running: false,
             modules: vec![],
+            display,
+            event_loop: Some(event_loop)
             // event_reader_id,
         }
     }
@@ -88,37 +103,43 @@ impl<'a, 'b> GameLoop<'a, 'b> {
         self.modules.push(module);
     }
 
-    pub fn run(&mut self) {
+    pub fn run(self) {
         self.running = true;
         let mut start_data = crate::StartData {
             world: &mut self.world,
+            display: self.display.clone()
         };
         for game_module in &self.modules {
             game_module.on_start(&mut start_data);
         }
 
         let mut fps_counter = crate::util::FpsCounter::new();
-        while self.running {
-            fps_counter.begin_frame();
+        self.event_loop.take().unwrap().run(move |event, _, _| {
+            match event {
+                Event::MainEventsCleared => {
+                    fps_counter.begin_frame();
 
-            {
-                let world = &self.world;
-                let mut time = world.write_resource::<Time>();
-                time.update_delta_time();
-            }
+                    {
+                        let world = &self.world;
+                        let mut time = world.write_resource::<Time>();
+                        time.update_delta_time();
+                    }
 
-            if let Some(dispatcher) = &mut self.dispatcher {
-                dispatcher.dispatch(&self.world);
-                self.world.maintain();
-            } else {
-                self.running = false;
-            }
+                    if let Some(dispatcher) = &mut self.dispatcher {
+                        dispatcher.dispatch(&self.world);
+                        self.world.maintain();
+                    } else {
+                        self.running = false;
+                    }
 
-            if fps_counter.end_frame() {
-                self.world.insert(FpsInfo {
-                    fps: fps_counter.get_fps(),
-                })
+                    if fps_counter.end_frame() {
+                        self.world.insert(FpsInfo {
+                            fps: fps_counter.get_fps(),
+                        })
+                    }
+                },
+                _ => (),
             }
-        }
+        });
     }
 }
