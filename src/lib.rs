@@ -237,8 +237,11 @@ pub struct StartData<'a> {
 }
 
 pub trait Module {
-    fn init(&self, init_data: &mut InitData) {}
-    fn start(&self, start_data: &mut StartData) {}
+    fn init(&self, _init_data: &mut InitData) {}
+    fn start(&self, _start_data: &mut StartData) {}
+    fn get_submodules(&mut self) -> Vec<Box<dyn Module>> {
+        vec![]
+    }
 }
 
 pub struct RuntimeBuilder {
@@ -248,14 +251,26 @@ pub struct RuntimeBuilder {
 
 impl RuntimeBuilder {
 
-    fn new(name: &str) -> Self {
+    pub fn new(name: &str) -> Self {
         Self {
             name: String::from(name),
             modules: vec![]
         }
     }
 
-    fn build(mut self) -> Runtime {
+    pub fn add_game_module<T: Module + 'static>(mut self, game_module: T) -> Self {
+        self.add_game_module_impl(Box::new(game_module));
+        self
+    }
+
+    fn add_game_module_impl(&mut self, mut module: Box<dyn Module>) {
+        for sub_module in module.get_submodules() {
+            self.add_game_module_impl(sub_module);
+        }
+        self.modules.push(module);
+    }
+
+    pub fn build(mut self) -> Runtime {
         let mut dispatcher_builder = specs::DispatcherBuilder::new();
         let mut init_data = crate::InitData::new();
         for game_module in &mut self.modules {
@@ -277,7 +292,15 @@ impl RuntimeBuilder {
                 Rc::new(glium::Display::new(wb, cb, &event_loop).unwrap()),
                 event_loop,
             )
+        };        
+        
+        let mut start_data = crate::StartData {
+            world: &mut world,
+            display: display.clone()
         };
+        for game_module in &self.modules {
+            game_module.start(&mut start_data);
+        }
 
         Runtime {
             dispatcher,
@@ -297,7 +320,7 @@ pub struct Runtime {
 
 impl Runtime {
 
-    fn start(mut self) {
+    pub fn start(mut self) {
         self.event_loop.run(move |event, _, _| {
             match event {
                 glutin::event::Event::MainEventsCleared => {
