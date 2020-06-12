@@ -1,16 +1,22 @@
 #[macro_use]
 extern crate log;
 
+use specs::prelude::*;
 use std::rc::Rc;
-use glium::Display;
 
-pub mod timing;
-pub mod game_loop;
-pub mod util;
-pub mod math;
-pub mod client;
-pub mod input;
-pub mod profile;
+use glium::Display;
+use glutin;
+
+pub type Event = glutin::event::Event<'static, ()>;
+pub type EventLoop = glutin::event_loop::EventLoop<()>;
+
+// pub mod timing;
+// pub mod game_loop;
+// pub mod util;
+// pub mod math;
+// pub mod client;
+// pub mod input;
+// pub mod profile;
 
 pub struct Insert<'a, 'c, 'd> {
     builder: &'a mut specs::DispatcherBuilder<'c, 'd>,
@@ -229,6 +235,81 @@ pub struct StartData<'a> {
     pub world: &'a mut specs::World,
     pub display: Rc<Display>
 }
+
+pub trait Module {
+    fn init(&self, init_data: &mut InitData) {}
+    fn start(&self, start_data: &mut StartData) {}
+}
+
+pub struct RuntimeBuilder {
+    name: String,
+    modules: Vec<Box<Module>>
+}
+
+impl RuntimeBuilder {
+
+    fn new(name: &str) -> Self {
+        Self {
+            name: String::from(name),
+            modules: vec![]
+        }
+    }
+
+    fn build(mut self) -> Runtime {
+        let mut dispatcher_builder = specs::DispatcherBuilder::new();
+        let mut init_data = crate::InitData::new();
+        for game_module in &mut self.modules {
+            game_module.init(&mut init_data);
+        }
+        init_data.post_dispatch(&mut dispatcher_builder);
+
+        let mut dispatcher = dispatcher_builder.build();
+        let mut world = World::new();
+        dispatcher.setup(&mut world);
+
+        let (display, event_loop) = {
+            let event_loop = EventLoop::new();
+            let wb = glutin::window::WindowBuilder::new().with_title(self.name.clone());
+            let cb = glutin::ContextBuilder::new()
+                //            .with_vsync(true)
+                .with_srgb(true);
+            (
+                Rc::new(glium::Display::new(wb, cb, &event_loop).unwrap()),
+                event_loop,
+            )
+        };
+
+        Runtime {
+            dispatcher,
+            display,
+            event_loop
+        }
+    }
+
+}
+
+pub struct Runtime {
+    dispatcher: Dispatcher<'static, 'static>,
+    // Client only
+    display: Rc<Display>,
+    event_loop: EventLoop
+}
+
+impl Runtime {
+
+    fn start(mut self) {
+        self.event_loop.run(move |event, _, _| {
+            match event {
+                glutin::event::Event::MainEventsCleared => {
+                    println!("Main loop!");
+                },
+                _ => ()
+            }
+        })
+    }
+
+}
+
 
 #[cfg(test)]
 mod tests {
