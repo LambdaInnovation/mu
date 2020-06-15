@@ -1,5 +1,10 @@
 #[macro_use]
-extern crate log;
+pub extern crate log;
+
+extern crate simplelog;
+pub extern crate specs;
+
+use simplelog::*;
 
 use specs::prelude::*;
 use std::rc::Rc;
@@ -52,7 +57,7 @@ pub struct InsertInfo {
 }
 
 impl InsertInfo {
-    fn new(name: &str) -> InsertInfo {
+    pub fn new(name: &str) -> InsertInfo {
         InsertInfo {
             name: String::from(name),
             deps: vec![],
@@ -61,19 +66,19 @@ impl InsertInfo {
         }
     }
 
-    fn order(mut self, new_order: i32) -> Self {
+    pub fn order(mut self, new_order: i32) -> Self {
         self.order = new_order;
         self
     }
 
-    fn after(mut self, deps: &[&str]) -> Self {
+    pub fn after(mut self, deps: &[&str]) -> Self {
         for s in deps {
             self.deps.push(String::from(*s));
         }
         self
     }
 
-    fn before(mut self, before_deps: &[&str]) -> Self {
+    pub fn before(mut self, before_deps: &[&str]) -> Self {
         for s in before_deps {
             self.before_deps.push(String::from(*s));
         }
@@ -283,6 +288,9 @@ impl RuntimeBuilder {
         let mut dispatcher = dispatcher_builder.build();
         let mut world = World::new();
         dispatcher.setup(&mut world);
+        
+        // Default resources
+        world.insert(ecs::Time::default());
 
         let (display, event_loop) = {
             let event_loop = WindowEventLoop::new();
@@ -306,6 +314,7 @@ impl RuntimeBuilder {
 
         Runtime {
             dispatcher,
+            world,
             display,
             event_loop
         }
@@ -315,6 +324,7 @@ impl RuntimeBuilder {
 
 pub struct Runtime {
     dispatcher: Dispatcher<'static, 'static>,
+    world: World,
     // Client only
     display: Rc<Display>,
     event_loop: WindowEventLoop
@@ -324,13 +334,14 @@ impl Runtime {
 
     pub fn start(mut self) {
         let display = self.display;
+        let mut dispatcher = self.dispatcher;
+        let mut world = self.world;
         self.event_loop.run(move |event, _, control_flow| {
-            *control_flow = ControlFlow::Wait;
+            *control_flow = ControlFlow::Poll;
             match event {
                 event::Event::LoopDestroyed => return,
                 event::Event::MainEventsCleared => {
-                    println!("Main loop!");
-                    display.gl_window().swap_buffers().unwrap();
+                    Self::update_one_frame(&*display, &mut world, &mut dispatcher);
                 },
                 event::Event::WindowEvent { event, .. } => match event {
                     event::WindowEvent::Resized(physical_size) => {
@@ -346,8 +357,27 @@ impl Runtime {
         })
     }
 
+    fn update_one_frame(display: &Display, world: &mut World, dispatcher: &mut Dispatcher<'static, 'static>) {
+        {
+            let mut time = world.write_resource::<ecs::Time>();
+            time.update_delta_time();
+        }
+
+        dispatcher.dispatch(world);
+        world.maintain();
+        display.gl_window().swap_buffers().unwrap();
+    }
+
 }
 
+pub fn common_init() {
+    CombinedLogger::init(
+        vec![
+            TermLogger::new(LevelFilter::Info, Config::default(), TerminalMode::Mixed),
+            // WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
+        ]
+    ).unwrap();
+}
 
 #[cfg(test)]
 mod tests {
