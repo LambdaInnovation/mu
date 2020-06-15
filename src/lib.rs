@@ -6,9 +6,9 @@ use std::rc::Rc;
 
 use glium::Display;
 use glutin;
-
-pub type Event = glutin::event::Event<'static, ()>;
-pub type EventLoop = glutin::event_loop::EventLoop<()>;
+use glutin::event;
+use glutin::event_loop::ControlFlow;
+pub type WindowEventLoop = glutin::event_loop::EventLoop<()>;
 
 // pub mod timing;
 // pub mod game_loop;
@@ -283,7 +283,7 @@ impl RuntimeBuilder {
         dispatcher.setup(&mut world);
 
         let (display, event_loop) = {
-            let event_loop = EventLoop::new();
+            let event_loop = WindowEventLoop::new();
             let wb = glutin::window::WindowBuilder::new().with_title(self.name.clone());
             let cb = glutin::ContextBuilder::new()
                 //            .with_vsync(true)
@@ -315,17 +315,30 @@ pub struct Runtime {
     dispatcher: Dispatcher<'static, 'static>,
     // Client only
     display: Rc<Display>,
-    event_loop: EventLoop
+    event_loop: WindowEventLoop
 }
 
 impl Runtime {
 
     pub fn start(mut self) {
-        self.event_loop.run(move |event, _, _| {
+        let display = self.display;
+        self.event_loop.run(move |event, _, control_flow| {
+            *control_flow = ControlFlow::Wait;
             match event {
-                glutin::event::Event::MainEventsCleared => {
+                event::Event::LoopDestroyed => return,
+                event::Event::MainEventsCleared => {
                     println!("Main loop!");
+                    display.gl_window().swap_buffers().unwrap();
                 },
+                event::Event::WindowEvent { event, .. } => match event {
+                    event::WindowEvent::Resized(physical_size) => {
+                        display.gl_window().resize(physical_size);
+                    }
+                    event::WindowEvent::CloseRequested => {
+                        *control_flow = glutin::event_loop::ControlFlow::Exit;
+                    },
+                    _ => ()
+                }
                 _ => ()
             }
         })
@@ -336,8 +349,4 @@ impl Runtime {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
 }
