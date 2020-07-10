@@ -17,6 +17,8 @@ pub type WindowEventLoop = glutin::event_loop::EventLoop<()>;
 
 pub mod ecs;
 pub mod math;
+pub mod util;
+pub mod client;
 // pub mod timing;
 // pub mod game_loop;
 // pub mod util;

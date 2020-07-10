@@ -17,6 +17,7 @@ pub type Rotation3 = cgmath::Basis3<Float>;
 
 pub type Deg = cgmath::Deg<Float>;
 pub type Euler = cgmath::Euler<Deg>;
+pub type Perspective = cgmath::PerspectiveFov<Float>;
 
 pub const PI: f32 = consts::PI;
 pub const DEG_2_RAD: f32 = PI / 180.0;
@@ -73,6 +74,14 @@ where
     } else {
         res
     }
+}
+
+pub fn ortho(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> Mat4 {
+    cgmath::ortho(left, right, bottom, top, near, far)
+}
+
+pub fn perspective(fov: Deg, aspect: Float, z_near: Float, z_far: Float) -> Mat4 {
+    cgmath::perspective(fov, aspect, z_near, z_far)
 }
 
 pub mod rand {
