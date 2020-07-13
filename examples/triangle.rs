@@ -5,7 +5,9 @@ use glium::{Display, VertexBuffer, DepthTest, Surface};
 use glium::program::ProgramCreationInput;
 use mu::glium::Program;
 use mu::specs::System;
-use specs::ReadStorage;
+use specs::{ReadStorage, ReadExpect};
+use mu::log::*;
+use mu::ecs::Time;
 
 #[derive(Copy, Clone)]
 struct TriangleVertex {
@@ -17,6 +19,7 @@ glium::implement_vertex!(TriangleVertex, position);
 struct DrawTriangleSystem {
     program: glium::Program,
     vbo: glium::VertexBuffer<TriangleVertex>,
+    elapsed: f32
 }
 
 impl DrawTriangleSystem {
@@ -41,15 +44,16 @@ impl DrawTriangleSystem {
         Self {
             program,
             vbo: VertexBuffer::new(display, &triangle).unwrap(),
+            elapsed: 0.0
         }
     }
 
 }
 
 impl<'a> System<'a> for DrawTriangleSystem {
-    type SystemData = ();
+    type SystemData = ReadExpect<'a, Time>;
 
-    fn run(&mut self, _: Self::SystemData) {
+    fn run(&mut self, time: Self::SystemData) {
         client::graphics::with_render_data(|r| {
             let draw_params = glium::DrawParameters {
                 depth: glium::Depth {
@@ -60,11 +64,19 @@ impl<'a> System<'a> for DrawTriangleSystem {
                 ..Default::default()
             };
 
+            let dt = (*time).get_delta_time();
+            self.elapsed += dt;
+
+            let uniform = glium::uniform! {
+                offset: (0.0, 0.5 * f32::sin(2. * self.elapsed), 0.0)
+            };
+
+            r.frame.clear_color_and_depth((0.3, 0.1, 0.1, 0.0), 0.0);
             r.frame.draw(
                 &self.vbo,
                 glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList),
                 &self.program,
-                &glium::uniform! {},
+                &uniform,
                 &draw_params).unwrap();
         });
     }

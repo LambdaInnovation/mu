@@ -369,7 +369,8 @@ impl Runtime {
 
         dispatcher.dispatch(world);
         world.maintain();
-        display.gl_window().swap_buffers().unwrap();
+        // TODO: figure out how to correct double buffering
+        // display.gl_window().swap_buffers().unwrap();
     }
 
 }
