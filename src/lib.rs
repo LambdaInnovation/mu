@@ -1,6 +1,9 @@
 #[macro_use]
 pub extern crate log;
 
+#[macro_use]
+pub extern crate glium;
+
 extern crate simplelog;
 pub extern crate specs;
 
@@ -15,17 +18,11 @@ use glutin::event;
 use glutin::event_loop::ControlFlow;
 pub type WindowEventLoop = glutin::event_loop::EventLoop<()>;
 
+pub mod asset;
 pub mod ecs;
 pub mod math;
 pub mod util;
 pub mod client;
-// pub mod timing;
-// pub mod game_loop;
-// pub mod util;
-// pub mod math;
-// pub mod client;
-// pub mod input;
-// pub mod profile;
 
 pub struct Insert<'a, 'c, 'd> {
     builder: &'a mut specs::DispatcherBuilder<'c, 'd>,
@@ -208,13 +205,15 @@ impl DispatchGroup {
 pub struct InitData {
     group_normal: DispatchGroup,
     group_thread_local: DispatchGroup,
+    pub display: Rc<Display>
 }
 
 impl InitData {
-    pub fn new() -> InitData {
+    pub fn new(display: Rc<Display>) -> InitData {
         InitData {
             group_normal: DispatchGroup::new(),
             group_thread_local: DispatchGroup::new(),
+            display: display
         }
     }
 
@@ -280,20 +279,7 @@ impl RuntimeBuilder {
     }
 
     pub fn build(mut self) -> Runtime {
-        let mut dispatcher_builder = specs::DispatcherBuilder::new();
-        let mut init_data = crate::InitData::new();
-        for game_module in &mut self.modules {
-            game_module.init(&mut init_data);
-        }
-        init_data.post_dispatch(&mut dispatcher_builder);
-
-        let mut dispatcher = dispatcher_builder.build();
-        let mut world = World::new();
-        dispatcher.setup(&mut world);
-        
-        // Default resources
-        world.insert(ecs::Time::default());
-
+        // ======= WINDOWS CREATION =======
         let (display, event_loop) = {
             let event_loop = WindowEventLoop::new();
             let wb = glutin::window::WindowBuilder::new().with_title(self.name.clone());
@@ -304,8 +290,24 @@ impl RuntimeBuilder {
                 Rc::new(glium::Display::new(wb, cb, &event_loop).unwrap()),
                 event_loop,
             )
-        };        
-        
+        };
+
+        // ======= INIT =======
+        let mut dispatcher_builder = specs::DispatcherBuilder::new();
+        let mut init_data = crate::InitData::new(display.clone());
+        for game_module in &mut self.modules {
+            game_module.init(&mut init_data);
+        }
+        init_data.post_dispatch(&mut dispatcher_builder);
+
+        let mut dispatcher = dispatcher_builder.build();
+        let mut world = World::new();
+        dispatcher.setup(&mut world);
+
+        // Default resources
+        world.insert(ecs::Time::default());
+
+        // ======= START =======
         let mut start_data = crate::StartData {
             world: &mut world,
             display: display.clone()

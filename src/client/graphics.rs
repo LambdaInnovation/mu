@@ -1,9 +1,12 @@
 use specs::prelude::*;
 use std::cell::RefCell;
-use glium::{Frame, Display, Surface};
+use glium::{Frame, Display, Surface, Program};
 
 use crate::util::Color;
 use crate::math::{Mat4, Vec3, Deg};
+use crate::math;
+
+pub use crate::glium;
 
 pub const DEP_RENDER_SETUP: &str = "render_setup";
 pub const DEP_RENDER_TEARDOWN: &str = "render_teardown";
@@ -32,6 +35,22 @@ pub fn with_render_data<F>(mut f: F)
         Some(ref mut data) => f(data),
         _ => panic!("No render data specified now"),
     });
+}
+
+pub fn load_shader_simple(display: &Display, vert_path: &str, frag_path: &str) -> glium::Program {
+    let vert = load_asset::<String>(vert_path).unwrap();
+    let frag = load_asset::<String>(frag_path).unwrap();
+    let program_input = ProgramCreationInput::SourceCode {
+        vertex_shader: vert.as_str(),
+        fragment_shader: frag.as_str(),
+        tessellation_control_shader: None,
+        tessellation_evaluation_shader: None,
+        transform_feedback_varyings: None,
+        geometry_shader: None,
+        outputs_srgb: true,
+        uses_point_size: false,
+    };
+    Program::new(&*display, program_input).unwrap()
 }
 
 fn init_render_data(data: FrameRenderData) {
@@ -102,14 +121,7 @@ impl<'a> System<'a> for SysRenderPrepare {
                 let rot = Mat4::from(trans.get_rotation());
 
                 //            rot[(3, 3)] = 1.0;
-                // !!!! TODO
-                let world_view: Mat4 = rot;
-                // let world_view: Mat4 = rot * crate::math::cgmath::Transform3::(&-trans.pos);
-
-                //            let mut wvp_matrix = Mat4::identity();
-                //            wvp_matrix[(0, 3)] = transform.pos[0];
-                //            wvp_matrix[(1, 3)] = transform.pos[1];
-                //            wvp_matrix[(2, 3)] = transform.pos[2];
+                let world_view: Mat4 = rot * math::Mat4::from_translation(-trans.pos);
 
                 let wvp_matrix = projection * world_view;
                 match cam.clear_color {
@@ -146,24 +158,18 @@ impl<'a> System<'a> for SysRenderTeardown {
 use std::rc::Rc;
 use crate::ecs::Transform;
 use crate::Module;
+use glium::program::ProgramCreationInput;
+use crate::asset::load_asset;
 
-pub struct GraphicsModule {
-    display: Rc<Display>,
-}
-
-impl GraphicsModule {
-    pub fn new(display: Rc<Display>) -> Self {
-        GraphicsModule { display }
-    }
-}
+pub struct GraphicsModule;
 
 impl Module for GraphicsModule {
     fn init(&self, init_data: &mut crate::InitData) {
         use crate::InsertInfo;
         {
-            let display_clone = self.display.clone();
+            let display_clone = init_data.display.clone();
             init_data.dispatch_thread_local(
-                InsertInfo::new("render_setup")
+                InsertInfo::new(DEP_RENDER_SETUP)
                     .before(&[DEP_RENDER_TEARDOWN])
                     .order(100),
                 move |f| {
@@ -174,7 +180,7 @@ impl Module for GraphicsModule {
             );
         }
         init_data.dispatch_thread_local(
-            InsertInfo::new("render_teardown").after(&[DEP_RENDER_SETUP]),
+            InsertInfo::new(DEP_RENDER_TEARDOWN).after(&[DEP_RENDER_SETUP]),
             |f| f.insert_thread_local(SysRenderTeardown {}),
         );
     }
