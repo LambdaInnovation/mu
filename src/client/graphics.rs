@@ -1,6 +1,9 @@
 use specs::prelude::*;
 use std::cell::RefCell;
 use glium::{Frame, Display, Surface, Program};
+use serde_json;
+use serde::{Serialize, Deserialize};
+use std::path;
 
 use crate::util::Color;
 use crate::math::{Mat4, Vec3, Deg};
@@ -21,6 +24,29 @@ pub struct FrameRenderData {
     pub camera_infos: Vec<CamRenderData>,
 }
 
+#[derive(Deserialize)]
+struct ShaderConfig {
+    vertex: String,
+    fragment: String,
+    #[serde(skip)]
+    _path: String,
+}
+
+#[derive(Deserialize)]
+struct TextureConfig {
+    image: String
+}
+
+impl LoadableAsset for ShaderConfig {
+    fn read(path: &str) -> std::io::Result<Self> {
+        let json_str = load_asset::<String>(path)?;
+        let mut ret: ShaderConfig = serde_json::from_str(json_str.as_str())?;
+        ret._path = String::from(crate::asset::get_dir(path));
+
+        Ok(ret)
+    }
+}
+
 thread_local!(
     static FRAME_RENDER_DATA: RefCell<Option<FrameRenderData>> = RefCell::new(None);
 );
@@ -37,9 +63,10 @@ pub fn with_render_data<F>(mut f: F)
     });
 }
 
-pub fn load_shader_simple(display: &Display, vert_path: &str, frag_path: &str) -> glium::Program {
-    let vert = load_asset::<String>(vert_path).unwrap();
-    let frag = load_asset::<String>(frag_path).unwrap();
+pub fn load_shader(display: &Display, path: &str) -> Program {
+    let config: ShaderConfig = load_asset(path).unwrap();
+    let vert: String = crate::asset::load_asset_local(&config._path, &config.vertex).unwrap();
+    let frag: String = crate::asset::load_asset_local(&config._path, &config.fragment).unwrap();
     let program_input = ProgramCreationInput::SourceCode {
         vertex_shader: vert.as_str(),
         fragment_shader: frag.as_str(),
@@ -159,7 +186,7 @@ use std::rc::Rc;
 use crate::ecs::Transform;
 use crate::Module;
 use glium::program::ProgramCreationInput;
-use crate::asset::load_asset;
+use crate::asset::{load_asset, LoadableAsset};
 
 pub struct GraphicsModule;
 

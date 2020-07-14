@@ -4,6 +4,9 @@ pub extern crate log;
 #[macro_use]
 pub extern crate glium;
 
+#[macro_use]
+extern crate serde;
+
 extern crate simplelog;
 pub extern crate specs;
 
@@ -35,6 +38,7 @@ impl<'a, 'c, 'd> Insert<'a, 'c, 'd> {
     where
         T: for<'x> specs::System<'x> + Send + 'c,
     {
+
         info!("insert {}", self.name);
         self.builder.add(system, self.name, self.deps);
     }

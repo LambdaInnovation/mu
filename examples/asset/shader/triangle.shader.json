@@ -1,4 +1,4 @@
 {
-  "vertex": "triangle.frag",
-  "fragment": "triangle.vert"
+  "vertex": "triangle.vert",
+  "fragment": "triangle.frag"
 }
