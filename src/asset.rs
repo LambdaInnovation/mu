@@ -40,6 +40,12 @@ impl LoadableAsset for String {
     }
 }
 
+impl LoadableAsset for Vec<u8> {
+    fn read(path: &str) -> io::Result<Self> {
+        fs::read(path)
+    }
+}
+
 pub fn set_base_asset_path(path: &'static str) {
     unsafe {
         BASE_ASSET_PATH = path;

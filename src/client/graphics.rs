@@ -34,13 +34,25 @@ struct ShaderConfig {
 
 #[derive(Deserialize)]
 struct TextureConfig {
-    image: String
+    image: String,
+    #[serde(skip)]
+    _path: String
 }
 
 impl LoadableAsset for ShaderConfig {
     fn read(path: &str) -> std::io::Result<Self> {
         let json_str = load_asset::<String>(path)?;
-        let mut ret: ShaderConfig = serde_json::from_str(json_str.as_str())?;
+        let mut ret: ShaderConfig = serde_json::from_str(&json_str)?;
+        ret._path = String::from(crate::asset::get_dir(path));
+
+        Ok(ret)
+    }
+}
+
+impl LoadableAsset for TextureConfig {
+    fn read(path: &str) -> std::io::Result<Self> {
+        let json_str = load_asset::<String>(path)?;
+        let mut ret: TextureConfig = serde_json::from_str(&json_str)?;
         ret._path = String::from(crate::asset::get_dir(path));
 
         Ok(ret)
@@ -78,6 +90,16 @@ pub fn load_shader(display: &Display, path: &str) -> Program {
         uses_point_size: false,
     };
     Program::new(&*display, program_input).unwrap()
+}
+
+pub fn load_texture(display: &Display, path: &str) -> glium::texture::CompressedSrgbTexture2d {
+    let config: TextureConfig = load_asset(path).unwrap();
+    let img_bytes: Vec<u8> = load_asset_local(&config._path, &config.image).unwrap();
+    let img = image::load_from_memory_with_format(&img_bytes,
+                                                  image::ImageFormat::Png).unwrap();
+    let img_dims = img.dimensions();
+    let img = RawImage2d::from_raw_rgba(img.into_rgba().into_vec(), img_dims);
+    glium::texture::CompressedSrgbTexture2d::new(display, img).unwrap()
 }
 
 fn init_render_data(data: FrameRenderData) {
@@ -186,7 +208,9 @@ use std::rc::Rc;
 use crate::ecs::Transform;
 use crate::Module;
 use glium::program::ProgramCreationInput;
-use crate::asset::{load_asset, LoadableAsset};
+use crate::asset::{load_asset, LoadableAsset, load_asset_local};
+use image::GenericImageView;
+use glium::texture::RawImage2d;
 
 pub struct GraphicsModule;
 
