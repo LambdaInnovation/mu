@@ -19,6 +19,7 @@ pub fn get_dir(path: &str) -> String {
 pub fn load_asset<T>(path: &str) -> io::Result<T>
 where T: LoadableAsset
 {
+    info!("load_asset: {:?}", &path);
     return T::read(path);
 }
 
@@ -28,9 +29,9 @@ where T: LoadableAsset
     let p = if base_dir.is_empty() {
         String::from(path)
     } else {
-        format!("{}/{}", base_dir, path)
+        format!("{ }/{}", base_dir, path)
     };
-    info!("path: {}", p);
+    info!("load_asset: {:?}", &p);
     return T::read(p.as_str());
 }
 
@@ -42,7 +43,7 @@ impl LoadableAsset for String {
 
 impl LoadableAsset for Vec<u8> {
     fn read(path: &str) -> io::Result<Self> {
-        fs::read(path)
+        fs::read(get_fs_path(path))
     }
 }
 

@@ -86,7 +86,7 @@ pub fn load_shader(display: &Display, path: &str) -> Program {
         tessellation_evaluation_shader: None,
         transform_feedback_varyings: None,
         geometry_shader: None,
-        outputs_srgb: true,
+        outputs_srgb: false,
         uses_point_size: false,
     };
     Program::new(&*display, program_input).unwrap()
