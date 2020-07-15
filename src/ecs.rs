@@ -2,7 +2,6 @@
 use specs::prelude::*;
 use crate::math::*;
 use std::time::Instant;
-use crate::util::Color;
 
 const MAX_DELTA_TIME: f32 = 0.1;
 

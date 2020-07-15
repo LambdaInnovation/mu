@@ -2,11 +2,10 @@ use specs::prelude::*;
 use std::cell::RefCell;
 use glium::{Frame, Display, Surface, Program};
 use serde_json;
-use serde::{Serialize, Deserialize};
-use std::path;
+use serde::{Deserialize};
 
 use crate::util::Color;
-use crate::math::{Mat4, Vec3, Deg};
+use crate::math::{Mat4, Vec3};
 use crate::math;
 
 pub use crate::glium;

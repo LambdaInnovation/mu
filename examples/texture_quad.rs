@@ -3,9 +3,8 @@ use mu::{RuntimeBuilder, Module, InitData, InsertInfo};
 use mu::client::graphics::{GraphicsModule, DEP_RENDER_SETUP, DEP_RENDER_TEARDOWN};
 use mu::client::graphics;
 use glium::{Program, VertexBuffer, implement_vertex, Display, DrawParameters, uniform, IndexBuffer, Surface};
-use glium::backend::Facade;
 use specs::System;
-use glium::index::{NoIndices, PrimitiveType};
+use glium::index::{PrimitiveType};
 use glium::uniforms::{MagnifySamplerFilter, MinifySamplerFilter};
 
 #[derive(Copy, Clone)]
@@ -58,7 +57,7 @@ impl DrawQuadSystem {
 impl<'a> System<'a> for DrawQuadSystem {
     type SystemData = ();
 
-    fn run(&mut self, data: Self::SystemData) {
+    fn run(&mut self, _: Self::SystemData) {
         graphics::with_render_data(|r| {
             let draw_params: DrawParameters = Default::default();
             let uniforms = uniform! {

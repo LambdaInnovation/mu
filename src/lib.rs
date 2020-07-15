@@ -1,10 +1,8 @@
 #[macro_use]
 pub extern crate log;
 
-#[macro_use]
 pub extern crate glium;
 
-#[macro_use]
 extern crate serde;
 
 extern crate simplelog;
@@ -258,7 +256,7 @@ pub trait Module {
 
 pub struct RuntimeBuilder {
     name: String,
-    modules: Vec<Box<Module>>
+    modules: Vec<Box<dyn Module>>
 }
 
 impl RuntimeBuilder {
@@ -340,7 +338,7 @@ pub struct Runtime {
 
 impl Runtime {
 
-    pub fn start(mut self) {
+    pub fn start(self) {
         let display = self.display;
         let mut dispatcher = self.dispatcher;
         let mut world = self.world;
@@ -365,7 +363,7 @@ impl Runtime {
         })
     }
 
-    fn update_one_frame(display: &Display, world: &mut World, dispatcher: &mut Dispatcher<'static, 'static>) {
+    fn update_one_frame(_display: &Display, world: &mut World, dispatcher: &mut Dispatcher<'static, 'static>) {
         {
             let mut time = world.write_resource::<ecs::Time>();
             time.update_delta_time();
