@@ -17,6 +17,9 @@ use glium::Display;
 use glutin;
 use glutin::event;
 use glutin::event_loop::ControlFlow;
+use crate::client::input::RawInputData;
+use crate::client::WindowInfo;
+
 pub type WindowEventLoop = glutin::event_loop::EventLoop<()>;
 
 pub mod asset;
@@ -308,6 +311,8 @@ impl RuntimeBuilder {
 
         // Default resources
         world.insert(ecs::Time::default());
+        world.insert(RawInputData::new());
+        world.insert(WindowInfo::new());
 
         // ======= START =======
         let mut start_data = crate::StartData {
@@ -344,33 +349,74 @@ impl Runtime {
         let mut world = self.world;
         self.event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
-            match event {
-                event::Event::LoopDestroyed => return,
-                event::Event::MainEventsCleared => {
-                    Self::update_one_frame(&*display, &mut world, &mut dispatcher);
-                },
-                event::Event::WindowEvent { event, .. } => match event {
-                    event::WindowEvent::Resized(physical_size) => {
-                        display.gl_window().resize(physical_size);
-                    }
-                    event::WindowEvent::CloseRequested => {
-                        *control_flow = glutin::event_loop::ControlFlow::Exit;
-                    },
-                    _ => ()
+
+            match &event {
+                event::Event::WindowEvent {
+                    event: event::WindowEvent::ScaleFactorChanged { scale_factor, .. }, ..
+                } => {
+                    info!("Scale factor changed!! {}", scale_factor);
                 }
                 _ => ()
+            }
+
+            let opt_ev = event.to_static();
+            {
+                let mut window_info = world.write_resource::<WindowInfo>();
+                match opt_ev.clone() {
+                    Some(ev) => window_info.frame_event_list.push(ev),
+                    _ => ()
+                }
+            }
+
+            if let Some(event) = opt_ev {
+                match event {
+                    event::Event::LoopDestroyed => return,
+                    event::Event::MainEventsCleared => {
+                        Self::update_one_frame(&*display, &mut world, &mut dispatcher);
+                    },
+                    event::Event::WindowEvent { event, .. } => {
+                        let mut raw_input = world.write_resource::<RawInputData>();
+                        raw_input.on_window_event(&event);
+                        match event {
+                            event::WindowEvent::Resized(physical_size) => {
+                                display.gl_window().resize(physical_size);
+                            }
+                            event::WindowEvent::CloseRequested => {
+                                *control_flow = glutin::event_loop::ControlFlow::Exit;
+                            },
+                            _ => ()
+                        }
+                    }
+                    event::Event::DeviceEvent { event, .. } => {
+                        let mut raw_input = world.write_resource::<RawInputData>();
+                        raw_input.on_device_event(&event);
+                    }
+                    _ => ()
+                }
             }
         })
     }
 
-    fn update_one_frame(_display: &Display, world: &mut World, dispatcher: &mut Dispatcher<'static, 'static>) {
-        {
+    fn update_one_frame(display: &Display, world: &mut World, dispatcher: &mut Dispatcher<'static, 'static>) {
+        { // DeltaTime update
             let mut time = world.write_resource::<ecs::Time>();
             time.update_delta_time();
         }
 
         dispatcher.dispatch(world);
         world.maintain();
+
+        { // Control update
+            let mut raw_input = world.write_resource::<RawInputData>();
+            raw_input.on_frame_end();
+        }
+        { // Window info update
+            let mut window_info = world.write_resource::<WindowInfo>();
+            window_info.frame_event_list.clear();
+
+            display.gl_window().window().set_cursor_grab(window_info.grab_cursor_count > 0);
+        }
+
         // TODO: figure out how to correct double buffering
         // display.gl_window().swap_buffers().unwrap();
     }

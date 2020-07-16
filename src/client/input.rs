@@ -58,12 +58,13 @@ impl RawInputData {
             },
             event::WindowEvent::MouseWheel { delta, ..  } => {
                 match delta {
-                    event::MouseScrollDelta::LineDelta(dx, dy) => {
-                        info!("LineDelta");
+                    event::MouseScrollDelta::LineDelta(_dx, dy) => {
+                        self.mouse_wheel_delta += *dy;
                     },
-                    event::MouseScrollDelta::PixelDelta(pos) => {
-                        info!("PixelDelta");
-                    }
+                    _ => ()
+                    // event::MouseScrollDelta::PixelDelta(pos) => {
+                    //     // info!("PixelDelta");
+                    // }
                 }
             },
             _ => ()
@@ -82,6 +83,7 @@ impl RawInputData {
     pub fn on_frame_end(&mut self) {
         self.frame_character_list.clear();
         self.mouse_frame_movement = vec2(0., 0.);
+        self.mouse_wheel_delta = 0.;
         RawInputData::_iter_button_state(&mut self.key_state);
         RawInputData::_iter_button_state(&mut self.mouse_button_state);
     }

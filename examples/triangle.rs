@@ -5,6 +5,7 @@ use glium::{Display, VertexBuffer, DepthTest, Surface};
 use mu::specs::System;
 use specs::{ReadExpect};
 use mu::ecs::Time;
+use mu::client::editor::EditorModule;
 
 #[derive(Copy, Clone)]
 struct TriangleVertex {

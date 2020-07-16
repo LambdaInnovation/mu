@@ -13,6 +13,11 @@ pub use crate::glium;
 pub const DEP_RENDER_SETUP: &str = "render_setup";
 pub const DEP_RENDER_TEARDOWN: &str = "render_teardown";
 
+pub mod render_order {
+    pub const OPAQUE: i32 = 0;
+    pub const DEBUG_UI: i32 = 11000;
+}
+
 pub struct CamRenderData {
     pub wvp_matrix: Mat4,
     pub world_pos: Vec3,
