@@ -9,13 +9,13 @@ pub enum ButtonState {
 
 pub struct RawInputData {
     // Keyboard
-    frame_character_list: Vec<char>,
+    pub frame_character_list: Vec<char>,
     key_state: [ButtonState;256],
     // Mouse
     mouse_button_state: [ButtonState; 8],
-    mouse_wheel_delta: f32,
-    mouse_frame_movement: Vec2,
-    cursor_position: Vec2
+    pub mouse_wheel_delta: f32,
+    pub mouse_frame_movement: Vec2,
+    pub cursor_position: Vec2
 }
 
 impl RawInputData {
@@ -86,6 +86,14 @@ impl RawInputData {
         self.mouse_wheel_delta = 0.;
         RawInputData::_iter_button_state(&mut self.key_state);
         RawInputData::_iter_button_state(&mut self.mouse_button_state);
+    }
+
+    pub fn get_key(&self, key: event::VirtualKeyCode) -> ButtonState {
+        self.key_state[key as usize]
+    }
+
+    pub fn get_mouse_button(&self, btn: event::MouseButton) -> ButtonState {
+        self.mouse_button_state[Self::_mouse_btn_to_id(btn) as usize]
     }
 
     fn _iter_button_state(v: &mut [ButtonState]) {
