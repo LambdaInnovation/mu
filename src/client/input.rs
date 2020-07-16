@@ -12,7 +12,7 @@ impl ButtonState {
         *self == ButtonState::Down || *self == ButtonState::Pressing
     }
 
-    fn is_up(&self) -> bool {
+    pub fn is_up(&self) -> bool {
         *self == ButtonState::Up || *self == ButtonState::Released
     }
 }
