@@ -34,13 +34,18 @@ impl Time {
 
 pub struct Transform {
     pub pos: Vec3,
-    pub rot: Vec3,
+    pub rot: Quaternion,
 }
 
 impl Transform {
-    pub fn get_rotation(&self) -> Quaternion {
-        Quaternion::from(Euler::new(deg(self.rot[0]), deg(self.rot[1]), deg(self.rot[2])))
+
+    pub fn new() -> Self {
+        Self {
+            pos: vec3(0., 0., 0.),
+            rot: Quaternion::one()
+        }
     }
+
 }
 
 impl Component for Transform {

@@ -7,6 +7,16 @@ pub enum ButtonState {
     Released, Down, Pressing, Up
 }
 
+impl ButtonState {
+    pub fn is_down(&self) -> bool {
+        *self == ButtonState::Down || *self == ButtonState::Pressing
+    }
+
+    fn is_up(&self) -> bool {
+        *self == ButtonState::Up || *self == ButtonState::Released
+    }
+}
+
 pub struct RawInputData {
     // Keyboard
     pub frame_character_list: Vec<char>,

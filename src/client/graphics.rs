@@ -146,15 +146,15 @@ struct SysRenderPrepare {
 pub struct SysRenderTeardown {}
 
 impl<'a> System<'a> for SysRenderPrepare {
-    type SystemData = (ReadStorage<'a, Camera>, ReadStorage<'a, Transform>);
+    type SystemData = (ReadExpect<'a, WindowInfo>, ReadStorage<'a, Camera>, ReadStorage<'a, Transform>);
 
-    fn run(&mut self, (cameras, transforms): Self::SystemData) {
+    fn run(&mut self, (window_info, cameras, transforms): Self::SystemData) {
         let mut frame = self.display.draw();
+        // Calculate wvp matrix
+        let aspect: f32 = window_info.get_aspect_ratio();
         let cam_infos = {
             let mut res: Vec<CamRenderData> = vec![];
             for (cam, trans) in (&cameras, &transforms).join() {
-                // Calculate wvp matrix
-                let aspect: f32 = 1.6;
 
                 let projection = match cam.projection {
                     CameraProjection::Perspective { fov, z_near, z_far } => {
@@ -171,7 +171,7 @@ impl<'a> System<'a> for SysRenderPrepare {
                 // let perspective: Mat4 = crate::math::cgmath::perspective()
                 //     .as_matrix()
                 //     .clone();
-                let rot = Mat4::from(trans.get_rotation());
+                let rot = Mat4::from(trans.rot);
 
                 //            rot[(3, 3)] = 1.0;
                 let world_view: Mat4 = rot * math::Mat4::from_translation(-trans.pos);
@@ -215,6 +215,7 @@ use glium::program::ProgramCreationInput;
 use crate::asset::{load_asset, LoadableAsset, load_asset_local};
 use image::GenericImageView;
 use glium::texture::RawImage2d;
+use crate::client::WindowInfo;
 
 pub struct GraphicsModule;
 

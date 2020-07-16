@@ -312,7 +312,11 @@ impl RuntimeBuilder {
         // Default resources
         world.insert(ecs::Time::default());
         world.insert(RawInputData::new());
-        world.insert(WindowInfo::new());
+
+        let mut window_info = WindowInfo::new();
+        let screen_size = display.gl_window().window().inner_size();
+        window_info.pixel_size = (screen_size.width, screen_size.height);
+        world.insert(window_info);
 
         // ======= START =======
         let mut start_data = crate::StartData {
@@ -380,6 +384,8 @@ impl Runtime {
                         match event {
                             event::WindowEvent::Resized(physical_size) => {
                                 display.gl_window().resize(physical_size);
+                                let mut window_info = world.write_resource::<WindowInfo>();
+                                window_info.pixel_size = (physical_size.width, physical_size.height)
                             }
                             event::WindowEvent::CloseRequested => {
                                 *control_flow = glutin::event_loop::ControlFlow::Exit;
