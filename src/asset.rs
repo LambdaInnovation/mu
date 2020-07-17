@@ -16,6 +16,7 @@ pub fn get_dir(path: &str) -> String {
     }
 }
 
+#[inline]
 pub fn load_asset<T>(path: &str) -> io::Result<T>
 where T: LoadableAsset
 {
@@ -23,16 +24,22 @@ where T: LoadableAsset
     return T::read(path);
 }
 
+#[inline]
 pub fn load_asset_local<T>(base_dir: &str, path: &str) -> io::Result<T>
 where T: LoadableAsset
 {
-    let p = if base_dir.is_empty() {
+    let p = get_asset_path_local(base_dir, path);
+    info!("load_asset: {:?}", &p);
+    return T::read(p.as_str());
+}
+
+#[inline]
+pub fn get_asset_path_local(base_dir: &str, path: &str) -> String {
+    if base_dir.is_empty() {
         String::from(path)
     } else {
         format!("{ }/{}", base_dir, path)
-    };
-    info!("load_asset: {:?}", &p);
-    return T::read(p.as_str());
+    }
 }
 
 impl LoadableAsset for String {

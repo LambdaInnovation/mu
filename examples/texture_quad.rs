@@ -1,7 +1,7 @@
 use mu;
 use mu::log;
 use mu::{RuntimeBuilder, Module, InitData, InsertInfo, StartData};
-use mu::client::graphics::{GraphicsModule, DEP_RENDER_SETUP, DEP_RENDER_TEARDOWN, Camera};
+use mu::client::graphics::{GraphicsModule, DEP_RENDER_SETUP, DEP_RENDER_TEARDOWN, Camera, Texture};
 use mu::client::graphics;
 use glium::{Program, VertexBuffer, implement_vertex, Display, DrawParameters, uniform, IndexBuffer, Surface};
 use specs::{System, WorldExt, Builder, ReadExpect, WriteStorage, Join};
@@ -34,7 +34,7 @@ struct DrawQuadSystem {
     program: Program,
     vbo: VertexBuffer<QuadVertex>,
     ibo: IndexBuffer<u16>,
-    tex: glium::texture::CompressedSrgbTexture2d
+    tex: Texture
 }
 
 impl DrawQuadSystem {
@@ -70,7 +70,7 @@ impl<'a> System<'a> for DrawQuadSystem {
                 // log::info!("{:?}", cam_info.wvp_matrix);
                 let wvp_mat_arr: [[f32; 4]; 4] = cam_info.wvp_matrix.into();
                 let uniforms = uniform! {
-                    tex: self.tex.sampled().magnify_filter(MagnifySamplerFilter::Linear)
+                    tex: self.tex.raw_texture.sampled().magnify_filter(MagnifySamplerFilter::Linear)
                         .minify_filter(MinifySamplerFilter::LinearMipmapLinear),
                     wvp_matrix: wvp_mat_arr
                 };

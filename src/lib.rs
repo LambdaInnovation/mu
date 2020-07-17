@@ -1,12 +1,10 @@
 #[macro_use]
 pub extern crate log;
-
+pub extern crate specs;
 pub extern crate glium;
 
 extern crate serde;
-
 extern crate simplelog;
-pub extern crate specs;
 
 use simplelog::*;
 
@@ -422,9 +420,6 @@ impl Runtime {
             display.gl_window().window().set_cursor_grab(window_info.grab_cursor_count > 0)
                 .unwrap_or_default();
         }
-
-        // TODO: figure out how to correct double buffering
-        // display.gl_window().swap_buffers().unwrap();
     }
 
 }

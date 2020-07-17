@@ -1,9 +1,11 @@
+
 use glutin;
 use glutin::event;
 
 pub mod graphics;
 pub mod input;
 pub mod editor;
+pub mod sprite;
 
 pub struct WindowInfo {
     pub frame_event_list: Vec<event::Event<'static, ()>>,

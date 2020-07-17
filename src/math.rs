@@ -3,12 +3,20 @@ pub use cgmath::num_traits::*;
 pub use cgmath;
 use std::f32::consts;
 use std::ops::{Div, Mul, Sub};
+use serde::{Serialize, Deserialize};
 
 pub type Float = f32;
 
 pub type Vec3 = cgmath::Vector3<Float>;
 pub type Vec2 = cgmath::Vector2<Float>;
 pub type Mat4 = cgmath::Matrix4<Float>;
+
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "Vec2")]
+pub struct Vec2SerdeRef {
+    x: Float,
+    y: Float
+}
 
 pub type Quaternion = cgmath::Quaternion<Float>;
 // #[allow(dead_code)]

@@ -1,14 +1,30 @@
-use specs::prelude::*;
 use std::cell::RefCell;
-use glium::{Frame, Display, Surface, Program};
-use serde_json;
-use serde::{Deserialize};
+use std::rc::Rc;
 
-use crate::util::Color;
+use glium::{Display, Frame, Program, Surface};
+use glium::program::ProgramCreationInput;
+use glium::texture::RawImage2d;
+use image::GenericImageView;
+use serde::Deserialize;
+use serde_json;
+use specs::prelude::*;
+
+use crate::asset::{load_asset, load_asset_local, LoadableAsset};
+use crate::client::WindowInfo;
+use crate::ecs::Transform;
+pub use crate::glium;
 use crate::math::{Mat4, Vec3};
 use crate::math;
+use crate::Module;
+use crate::util::Color;
+use uuid::Uuid;
 
-pub use crate::glium;
+// pub type Texture = glium::texture::CompressedSrgbTexture2d;
+
+pub struct Texture {
+    pub uuid: Uuid,
+    pub raw_texture: glium::texture::CompressedSrgbTexture2d
+}
 
 pub const DEP_RENDER_SETUP: &str = "render_setup";
 pub const DEP_RENDER_TEARDOWN: &str = "render_teardown";
@@ -96,14 +112,19 @@ pub fn load_shader(display: &Display, path: &str) -> Program {
     Program::new(&*display, program_input).unwrap()
 }
 
-pub fn load_texture(display: &Display, path: &str) -> glium::texture::CompressedSrgbTexture2d {
+pub fn load_texture(display: &Display, path: &str) -> Texture {
     let config: TextureConfig = load_asset(path).unwrap();
     let img_bytes: Vec<u8> = load_asset_local(&config._path, &config.image).unwrap();
     let img = image::load_from_memory_with_format(&img_bytes,
                                                   image::ImageFormat::Png).unwrap();
     let img_dims = img.dimensions();
     let img = RawImage2d::from_raw_rgba(img.into_rgba().into_vec(), img_dims);
-    glium::texture::CompressedSrgbTexture2d::new(display, img).unwrap()
+    let raw_texture = glium::texture::CompressedSrgbTexture2d::new(display, img).unwrap();
+
+    Texture {
+        uuid: Uuid::new_v4(),
+        raw_texture
+    }
 }
 
 fn init_render_data(data: FrameRenderData) {
@@ -207,15 +228,6 @@ impl<'a> System<'a> for SysRenderTeardown {
         render_data.frame.finish().unwrap();
     }
 }
-
-use std::rc::Rc;
-use crate::ecs::Transform;
-use crate::Module;
-use glium::program::ProgramCreationInput;
-use crate::asset::{load_asset, LoadableAsset, load_asset_local};
-use image::GenericImageView;
-use glium::texture::RawImage2d;
-use crate::client::WindowInfo;
 
 pub struct GraphicsModule;
 
