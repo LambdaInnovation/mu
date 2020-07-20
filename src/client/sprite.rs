@@ -17,6 +17,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io;
 use glium::index::PrimitiveType;
+use std::rc::Rc;
 
 #[derive(Clone, Deserialize)]
 pub struct SpriteConfig {
@@ -63,7 +64,7 @@ pub struct SpriteSheet {
 }
 
 impl SpriteSheet {
-    fn as_ref(&self) -> SpriteSheetRef {
+    pub fn as_ref(&self) -> SpriteSheetRef {
         SpriteSheetRef {
             uuid: self.uuid,
             sprites: (&self.sprites).into_iter()
@@ -79,7 +80,7 @@ impl SpriteSheet {
         }
     }
 
-    fn find_sprite(&self, name: &str) -> Option<&Sprite> {
+    pub fn find_sprite(&self, name: &str) -> Option<&Sprite> {
         self.sprites.iter().find(|x| &x.config.name == name)
     }
 }
@@ -147,7 +148,7 @@ impl Module for SpriteModule {
                 .before(&[graphics::DEP_RENDER_TEARDOWN])
                 .after(&[graphics::DEP_RENDER_SETUP])
                 .order(graphics::render_order::OPAQUE),
-            move |f| f.insert_thread_local(SpriteRenderSystem::new(&display_clone)));
+            move |f| f.insert_thread_local(SpriteRenderSystem::new(display_clone)));
     }
 }
 
@@ -175,18 +176,20 @@ struct SpriteInstanceData {
     i_uv_max: [f32; 2]
 }
 
-glium::implement_vertex!(SpriteInstanceData, i_world_view);
+glium::implement_vertex!(SpriteInstanceData, i_world_view, i_uv_min, i_uv_max);
 
 struct SpriteRenderSystem {
     vbo: VertexBuffer<SpriteVertex>,
     instance_buf: VertexBuffer<SpriteInstanceData>,
     ibo: IndexBuffer<u16>,
     sprite_program: Program,
+    display: Rc<Display>
 }
 
 impl SpriteRenderSystem {
 
-    pub fn new(display: &Display) -> Self {
+    pub fn new(display_rc: Rc<Display>) -> Self {
+        let display = &*display_rc;
         let vert = include_str!("../../assets/sprite_default.vert");
         let frag = include_str!("../../assets/sprite_default.frag");
         let program = graphics::load_shader_by_content(&display, vert, frag);
@@ -207,11 +210,12 @@ impl SpriteRenderSystem {
             vbo,
             instance_buf,
             ibo,
-            sprite_program: program
+            sprite_program: program,
+            display: display_rc
         }
     }
 
-    fn _flush_current_batch(&self, batch: Batch) {
+    fn _flush_current_batch(&mut self, batch: Batch) {
         LOADED_SPRITE_SHEETS.with(|refcell| {
             let m = refcell.borrow();
             let sheet = m.get(&batch.sheet_uuid).unwrap();
@@ -238,7 +242,12 @@ impl SpriteRenderSystem {
                     }
                 })
                 .collect::<Vec<_>>();
-            self.instance_buf.write(&instance_data);
+
+            // if instance_data.len() != batch.sprites.len() {
+            self.instance_buf = VertexBuffer::dynamic(&*self.display, &instance_data).unwrap();
+            // } else {
+            //     self.instance_buf.write(&instance_data);
+            // }
 
             graphics::with_render_data(|r| {
                 for cam in &r.camera_infos {
@@ -253,7 +262,7 @@ impl SpriteRenderSystem {
                     &self.ibo,
                         &self.sprite_program,
                         &uniforms,
-                        &Default::default());
+                        &Default::default()).unwrap();
                 }
             });
         });
@@ -276,7 +285,7 @@ impl<'a> System<'a> for SpriteRenderSystem {
     fn run(&mut self, (sr_vec, trans_vec): Self::SystemData) {
         let mut cur_batch: Option<Batch> = None;
         for (trans, sr) in (&trans_vec, &sr_vec).join() {
-            let world_view: Mat4 = Mat4::from(trans.rot) * math::Mat4::from_translation(-trans.pos);
+            let world_view: Mat4 = math::Mat4::from_translation(trans.pos) * Mat4::from(trans.rot);
             let sprite_instance = SpriteInstance {
                 idx: sr.sprite.idx,
                 world_view

@@ -46,6 +46,16 @@ impl Transform {
         }
     }
 
+    pub fn pos(mut self, p: Vec3) -> Self {
+        self.pos = p;
+        self
+    }
+
+    pub fn rot(mut self, r: Quaternion) -> Self {
+        self.rot = r;
+        self
+    }
+
 }
 
 impl Component for Transform {

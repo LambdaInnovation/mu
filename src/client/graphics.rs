@@ -199,7 +199,7 @@ impl<'a> System<'a> for SysRenderPrepare {
                 let rot = Mat4::from(trans.rot);
 
                 //            rot[(3, 3)] = 1.0;
-                let world_view: Mat4 = rot * math::Mat4::from_translation(-trans.pos);
+                let world_view: Mat4 = math::Mat4::from_translation(-trans.pos) * rot;
 
                 let wvp_matrix = projection * world_view;
                 match cam.clear_color {
