@@ -1,18 +1,22 @@
-use crate::{asset, Module, InitData, InsertInfo};
+use crate::{asset, Module, InitData, InsertInfo, math};
 use crate::math::*;
 use crate::asset::LoadableAsset;
-use serde_json;
-use serde::Deserialize;
-use std::io;
 use crate::client::graphics::Texture;
 use crate::client::graphics;
-use glium::Display;
-use specs::{Component, VecStorage, System, ReadStorage};
 use crate::ecs::Transform;
-use std::collections::HashMap;
-use uuid::Uuid;
-use std::cell::RefCell;
+
+use serde_json;
+use serde::Deserialize;
+use glium;
+use glium::{Display, VertexBuffer, IndexBuffer, Surface, Program};
+use specs::{Component, VecStorage, System, ReadStorage};
 use specs::Join;
+use uuid::Uuid;
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::io;
+use glium::index::PrimitiveType;
 
 #[derive(Clone, Deserialize)]
 pub struct SpriteConfig {
@@ -54,6 +58,7 @@ pub struct Sprite {
 pub struct SpriteSheet {
     pub sprites: Vec<Sprite>,
     pub texture: Texture,
+    pub ppu: u32,
     pub uuid: Uuid
 }
 
@@ -72,6 +77,10 @@ impl SpriteSheet {
                 })
                 .collect()
         }
+    }
+
+    fn find_sprite(&self, name: &str) -> Option<&Sprite> {
+        self.sprites.iter().find(|x| &x.config.name == name)
     }
 }
 
@@ -103,7 +112,8 @@ pub fn load_sprite_sheet(display: &Display, path: &str) -> io::Result<SpriteShee
     let sheet = SpriteSheet {
         texture,
         sprites,
-        uuid
+        uuid,
+        ppu: config.ppu,
     };
     let sheet_ref = sheet.as_ref();
     LOADED_SPRITE_SHEETS.with(|ref_cell| {
@@ -131,24 +141,171 @@ pub struct SpriteModule;
 
 impl Module for SpriteModule {
     fn init(&self, init_data: &mut InitData) {
+        let display_clone = init_data.display.clone();
         init_data.dispatch_thread_local(
         InsertInfo::new("sprite")
                 .before(&[graphics::DEP_RENDER_TEARDOWN])
                 .after(&[graphics::DEP_RENDER_SETUP])
                 .order(graphics::render_order::OPAQUE),
-            |f| f.insert_thread_local(SpriteRenderSystem));
+            move |f| f.insert_thread_local(SpriteRenderSystem::new(&display_clone)));
     }
 }
 
+#[derive(Copy, Clone)]
+struct SpriteVertex {
+    v_pos: [f32; 2],
+    v_uv: [f32; 2],
+}
 
-struct SpriteRenderSystem;
+impl SpriteVertex {
+    fn new(x: f32, y: f32, u: f32, v: f32) -> Self {
+        SpriteVertex {
+            v_pos: [x, y],
+            v_uv: [u, v]
+        }
+    }
+}
+
+glium::implement_vertex!(SpriteVertex, v_pos, v_uv);
+
+#[derive(Copy, Clone, Default)]
+struct SpriteInstanceData {
+    i_world_view: [[f32; 4]; 4],
+    i_uv_min: [f32; 2],
+    i_uv_max: [f32; 2]
+}
+
+glium::implement_vertex!(SpriteInstanceData, i_world_view);
+
+struct SpriteRenderSystem {
+    vbo: VertexBuffer<SpriteVertex>,
+    instance_buf: VertexBuffer<SpriteInstanceData>,
+    ibo: IndexBuffer<u16>,
+    sprite_program: Program,
+}
+
+impl SpriteRenderSystem {
+
+    pub fn new(display: &Display) -> Self {
+        let vert = include_str!("../../assets/sprite_default.vert");
+        let frag = include_str!("../../assets/sprite_default.frag");
+        let program = graphics::load_shader_by_content(&display, vert, frag);
+        let vbo = VertexBuffer::new(display, &[
+            SpriteVertex::new(-0.5, -0.5, 0., 0.),
+            SpriteVertex::new(-0.5, 0.5, 0., 1.),
+            SpriteVertex::new(0.5, 0.5, 1., 1.),
+            SpriteVertex::new(0.5, -0.5, 1., 0.)
+        ]).unwrap();
+        let instance_buf: VertexBuffer<SpriteInstanceData> = VertexBuffer::dynamic(
+            display, &[Default::default(); 4096])
+            .unwrap();
+
+        let ibo = IndexBuffer::new(display, PrimitiveType::TrianglesList,
+                                   &[0u16, 1, 2, 0, 2, 3]).unwrap();
+
+        Self {
+            vbo,
+            instance_buf,
+            ibo,
+            sprite_program: program
+        }
+    }
+
+    fn _flush_current_batch(&self, batch: Batch) {
+        LOADED_SPRITE_SHEETS.with(|refcell| {
+            let m = refcell.borrow();
+            let sheet = m.get(&batch.sheet_uuid).unwrap();
+
+            let instance_data = (&batch.sprites).iter()
+                .map(|x| {
+                    let sprite_ref = &sheet.sprites[x.idx];
+                    let tex_width = sheet.texture.raw_texture.width() as f32;
+                    let tex_height = sheet.texture.raw_texture.height() as f32;
+
+                    let tuv1: Vec2 = sprite_ref.config.pos - sprite_ref.config.size * 0.5;
+                    let tuv2: Vec2 = sprite_ref.config.pos + sprite_ref.config.size * 0.5;
+
+                    let u1 = tuv1.x / tex_width;
+                    let v1 = tuv1.y / tex_height;
+                    let u2 = tuv2.x / tex_width;
+                    let v2 = tuv2.y / tex_height;
+
+                    // sprite_ref.config.
+                    SpriteInstanceData {
+                        i_world_view: x.world_view.into(),
+                        i_uv_min: [u1, v1],
+                        i_uv_max: [u2, v2]
+                    }
+                })
+                .collect::<Vec<_>>();
+            self.instance_buf.write(&instance_data);
+
+            graphics::with_render_data(|r| {
+                for cam in &r.camera_infos {
+                    let wvp_mat: [[f32; 4]; 4] = cam.wvp_matrix.into();
+                    let uniforms = glium::uniform! {
+                        u_proj: wvp_mat,
+                        u_texture: &sheet.texture.raw_texture
+                    };
+
+                    r.frame.draw(
+                        (&self.vbo, self.instance_buf.per_instance().unwrap()),
+                    &self.ibo,
+                        &self.sprite_program,
+                        &uniforms,
+                        &Default::default());
+                }
+            });
+        });
+    }
+}
+
+struct SpriteInstance {
+    world_view: Mat4,
+    idx: usize
+}
+
+struct Batch {
+    sheet_uuid: Uuid,
+    sprites: Vec<SpriteInstance>
+}
 
 impl<'a> System<'a> for SpriteRenderSystem {
     type SystemData = (ReadStorage<'a, SpriteRenderer>, ReadStorage<'a, Transform>);
 
     fn run(&mut self, (sr_vec, trans_vec): Self::SystemData) {
-        for (trans, sr) in (&sr_vec, &trans_vec).join() {
-            // DO the rendering
+        let mut cur_batch: Option<Batch> = None;
+        for (trans, sr) in (&trans_vec, &sr_vec).join() {
+            let world_view: Mat4 = Mat4::from(trans.rot) * math::Mat4::from_translation(-trans.pos);
+            let sprite_instance = SpriteInstance {
+                idx: sr.sprite.idx,
+                world_view
+            };
+            // Batching
+            let cur_taken = cur_batch.take();
+            // Has last batch
+            if let Some(mut cur_taken) = cur_taken {
+                if cur_taken.sheet_uuid == sr.sprite.sheet_uuid { // Can batch, add to list
+                    cur_taken.sprites.push(sprite_instance);
+                    cur_batch = Some(cur_taken);
+                } else { // Can't batch, flush current && set now as now
+                    self._flush_current_batch(cur_taken);
+                    cur_batch = Some(Batch {
+                        sheet_uuid: sr.sprite.sheet_uuid,
+                        sprites: vec![sprite_instance]
+                    });
+                }
+            } else { // No previous batch, set one
+                cur_batch = Some(Batch {
+                    sheet_uuid: sr.sprite.sheet_uuid,
+                    sprites: vec![sprite_instance]
+                });
+            }
+        }
+
+        // Flush final batch
+        if let Some(final_batch) = cur_batch.take() {
+            self._flush_current_batch(final_batch);
         }
     }
 }

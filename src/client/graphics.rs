@@ -85,9 +85,9 @@ thread_local!(
 
 /// Acquire the render data reference in the closure,
 /// and (presumably) do the rendering.
-pub fn with_render_data<F>(mut f: F)
+pub fn with_render_data<F>(f: F)
     where
-        F: FnMut(&mut FrameRenderData),
+        F: FnOnce(&mut FrameRenderData),
 {
     FRAME_RENDER_DATA.with(|data| match *data.borrow_mut() {
         Some(ref mut data) => f(data),
@@ -99,9 +99,13 @@ pub fn load_shader(display: &Display, path: &str) -> Program {
     let config: ShaderConfig = load_asset(path).unwrap();
     let vert: String = crate::asset::load_asset_local(&config._path, &config.vertex).unwrap();
     let frag: String = crate::asset::load_asset_local(&config._path, &config.fragment).unwrap();
+    load_shader_by_content(&display, &vert, &frag)
+}
+
+pub fn load_shader_by_content(display: &Display, vertex: &str, fragment: &str) -> Program {
     let program_input = ProgramCreationInput::SourceCode {
-        vertex_shader: vert.as_str(),
-        fragment_shader: frag.as_str(),
+        vertex_shader: vertex,
+        fragment_shader: fragment,
         tessellation_control_shader: None,
         tessellation_evaluation_shader: None,
         transform_feedback_varyings: None,
