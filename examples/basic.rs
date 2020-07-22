@@ -1,6 +1,6 @@
 extern crate mu;
 use mu::log::*;
-use mu::specs::prelude::*;
+use specs::prelude::*;
 
 struct ExampleSystem {
     timer: f32

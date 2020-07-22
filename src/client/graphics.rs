@@ -9,15 +9,17 @@ use serde::Deserialize;
 use serde_json;
 use specs::prelude::*;
 
-use crate::asset::{load_asset, load_asset_local, LoadableAsset};
+use crate::asset::{load_asset, load_asset_local, LoadableAsset, ResourceRef};
 use crate::client::WindowInfo;
 use crate::ecs::Transform;
-pub use crate::glium;
-use crate::math::{Mat4, Vec3};
+use crate::glium;
+use crate::math::{Mat4, Vec3, Float};
 use crate::math;
 use crate::Module;
 use crate::util::Color;
 use uuid::Uuid;
+use std::collections::HashMap;
+use glium::uniforms::{UniformsStorage, Uniforms, UniformValue};
 
 // pub type Texture = glium::texture::CompressedSrgbTexture2d;
 
@@ -230,6 +232,86 @@ impl<'a> System<'a> for SysRenderTeardown {
     fn run(&mut self, _: Self::SystemData) {
         let render_data = self::clear_render_data();
         render_data.frame.finish().unwrap();
+    }
+}
+
+#[derive(Clone)]
+pub enum MatUniform {
+    Float(f32),
+    Mat4([[f32; 4]; 4]),
+    Sampler(Rc<Texture>)
+}
+
+#[derive(Clone)]
+pub struct Material {
+    pub program: ResourceRef<Program>,
+    pub uniforms: MaterialUniforms
+}
+
+#[derive(Clone)]
+struct MaterialUniforms {
+    properties: HashMap<String, MatUniform>
+}
+
+impl MaterialUniforms {
+    fn new() -> Self {
+        Self {
+            properties: HashMap::new()
+        }
+    }
+}
+
+impl Material {
+
+    fn new(program: ResourceRef<Program>) -> Self {
+        Self {
+            program,
+            uniforms: MaterialUniforms::new()
+        }
+    }
+
+}
+
+impl MaterialUniforms {
+
+    fn ref_visit_values<'a, F: FnMut(&str, UniformValue<'a>)>(&'a self, &mut func: F) {
+        for (k, v) in &self.properties {
+            let uniform_value: UniformValue = match v {
+                MatUniform::Float(f) => UniformValue::Float(*f),
+                MatUniform::Mat4(m) => UniformValue::Mat4((*m).into()),
+                MatUniform::Sampler(tex) =>
+                    UniformValue::CompressedSrgbTexture2d(&tex.raw_texture, None)
+            };
+
+            func(&k, uniform_value);
+        }
+    }
+}
+
+impl Uniforms for MaterialUniforms {
+    fn visit_values<'a, F: FnMut(&str, UniformValue<'a>)>(&'a self, mut func: F) {
+        self.ref_visit_values(&mut func);
+    }
+}
+
+
+pub struct MaterialCombinedUniforms<A> where A: Uniforms {
+    a: A,
+    b: MaterialUniforms
+}
+
+impl<A> MaterialCombinedUniforms<A> where A: Uniforms {
+    pub(crate) fn new(a: A, b: MaterialUniforms) -> Self {
+        Self {
+            a, b
+        }
+    }
+}
+
+impl<A> Uniforms for MaterialCombinedUniforms<A> where A: Uniforms {
+    fn visit_values<'a, F: FnMut(&str, UniformValue<'a>)>(&'a self, mut func: F) {
+        self.b.ref_visit_values(&mut func);
+        self.a.visit_values(func);
     }
 }
 

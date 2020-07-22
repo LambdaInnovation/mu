@@ -1,7 +1,7 @@
 use crate::{asset, Module, InitData, InsertInfo, math};
 use crate::math::*;
-use crate::asset::LoadableAsset;
-use crate::client::graphics::Texture;
+use crate::asset::{LoadableAsset, ResourceRef};
+use crate::client::graphics::{Texture, Material};
 use crate::client::graphics;
 use crate::ecs::Transform;
 
@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::io;
 use glium::index::PrimitiveType;
 use std::rc::Rc;
+use glium::uniforms::UniformsStorage;
 
 #[derive(Clone, Deserialize)]
 pub struct SpriteConfig {
@@ -132,6 +133,7 @@ pub fn unload_sprite_sheet(uuid: Uuid) {
 
 pub struct SpriteRenderer {
     pub sprite: SpriteRef,
+    pub material: Option<graphics::Material>
 }
 
 impl Component for SpriteRenderer {
@@ -257,12 +259,24 @@ impl SpriteRenderSystem {
                         u_texture: &sheet.texture.raw_texture
                     };
 
-                    r.frame.draw(
-                        (&self.vbo, self.instance_buf.per_instance().unwrap()),
-                    &self.ibo,
-                        &self.sprite_program,
-                        &uniforms,
-                        &Default::default()).unwrap();
+                    if let Some(material) = &batch.material {
+                        asset::with_resource(&material.program, |program: &mut Program| {
+                            let uniforms = graphics::MaterialCombinedUniforms::new(uniforms, material.uniforms.clone());
+                            r.frame.draw(
+                                (&self.vbo, self.instance_buf.per_instance().unwrap()),
+                                &self.ibo,
+                                program,
+                                &uniforms,
+                                &Default::default()).unwrap();
+                        });
+                    } else {
+                        r.frame.draw(
+                            (&self.vbo, self.instance_buf.per_instance().unwrap()),
+                            &self.ibo,
+                            &self.sprite_program,
+                            &uniforms,
+                            &Default::default()).unwrap();
+                    }
                 }
             });
         });
@@ -276,7 +290,8 @@ struct SpriteInstance {
 
 struct Batch {
     sheet_uuid: Uuid,
-    sprites: Vec<SpriteInstance>
+    sprites: Vec<SpriteInstance>,
+    material: Option<Material>
 }
 
 impl<'a> System<'a> for SpriteRenderSystem {
@@ -294,6 +309,7 @@ impl<'a> System<'a> for SpriteRenderSystem {
             let cur_taken = cur_batch.take();
             // Has last batch
             if let Some(mut cur_taken) = cur_taken {
+                // TODO: Add material difference telling
                 if cur_taken.sheet_uuid == sr.sprite.sheet_uuid { // Can batch, add to list
                     cur_taken.sprites.push(sprite_instance);
                     cur_batch = Some(cur_taken);
@@ -301,13 +317,15 @@ impl<'a> System<'a> for SpriteRenderSystem {
                     self._flush_current_batch(cur_taken);
                     cur_batch = Some(Batch {
                         sheet_uuid: sr.sprite.sheet_uuid,
-                        sprites: vec![sprite_instance]
+                        sprites: vec![sprite_instance],
+                        material: sr.material.clone() // FIXME: Useless clone
                     });
                 }
             } else { // No previous batch, set one
                 cur_batch = Some(Batch {
                     sheet_uuid: sr.sprite.sheet_uuid,
-                    sprites: vec![sprite_instance]
+                    sprites: vec![sprite_instance],
+                    material: sr.material.clone()
                 });
             }
         }

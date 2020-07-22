@@ -15,12 +15,12 @@ impl Module for MyModule {
 
         start_data.world.create_entity()
             .with(Transform::new().pos(math::vec3(0., 1., 0.)))
-            .with(SpriteRenderer { sprite: sprite_ref.clone() })
+            .with(SpriteRenderer { sprite: sprite_ref.clone(), material: None })
             .build();
 
         start_data.world.create_entity()
             .with(Transform::new().pos(math::vec3(0.5, -0.3, 0.)))
-            .with(SpriteRenderer { sprite: sprite_ref.clone() })
+            .with(SpriteRenderer { sprite: sprite_ref.clone(), material: None })
             .build();
 
         start_data.world.create_entity()

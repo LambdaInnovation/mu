@@ -5,6 +5,7 @@ use std::time::Instant;
 
 const MAX_DELTA_TIME: f32 = 0.1;
 
+
 pub struct Time {
     delta_time: f32, //Duration,
     now: Instant,

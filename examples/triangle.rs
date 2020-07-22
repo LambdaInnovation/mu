@@ -2,7 +2,7 @@ use mu::{RuntimeBuilder, InitData, InsertInfo};
 use mu::client::graphics::{GraphicsModule, DEP_RENDER_TEARDOWN, DEP_RENDER_SETUP, load_shader};
 use mu::client;
 use glium::{Display, VertexBuffer, DepthTest, Surface};
-use mu::specs::System;
+use specs::System;
 use specs::{ReadExpect};
 use mu::ecs::Time;
 use mu::client::editor::EditorModule;

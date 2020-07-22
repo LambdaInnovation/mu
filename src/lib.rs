@@ -1,8 +1,8 @@
 #[macro_use]
 pub extern crate log;
-pub extern crate specs;
-pub extern crate glium;
 
+extern crate specs;
+extern crate glium;
 extern crate serde;
 extern crate simplelog;
 
