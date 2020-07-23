@@ -12,6 +12,8 @@ use mu::client::graphics::CameraProjection::Orthographic;
 use mu::util::Color;
 use mu::client::input::RawInputData;
 use glutin::event::VirtualKeyCode;
+use mu::asset;
+use mu::asset::ResourceRef;
 
 #[derive(Copy, Clone)]
 struct QuadVertex {
@@ -31,10 +33,10 @@ impl QuadVertex {
 implement_vertex!(QuadVertex, position, uv);
 
 struct DrawQuadSystem {
-    program: Program,
+    program: ResourceRef<Program>,
     vbo: VertexBuffer<QuadVertex>,
     ibo: IndexBuffer<u16>,
-    tex: Texture
+    tex: ResourceRef<Texture>
 }
 
 impl DrawQuadSystem {
@@ -65,22 +67,29 @@ impl<'a> System<'a> for DrawQuadSystem {
 
     fn run(&mut self, _: Self::SystemData) {
         graphics::with_render_data(|r| {
-            for cam_info in &r.camera_infos {
+            let cam_infos = &r.camera_infos;
+            let frame = &mut r.frame;
+            for cam_info in cam_infos {
                 let draw_params: DrawParameters = Default::default();
                 // log::info!("{:?}", cam_info.wvp_matrix);
                 let wvp_mat_arr: [[f32; 4]; 4] = cam_info.wvp_matrix.into();
-                let uniforms = uniform! {
-                    tex: self.tex.raw_texture.sampled().magnify_filter(MagnifySamplerFilter::Linear)
-                        .minify_filter(MinifySamplerFilter::LinearMipmapLinear),
-                    wvp_matrix: wvp_mat_arr
-                };
-                r.frame.clear_color_and_depth((0.1, 0.1, 0.3, 0.0), 0.0);
-                r.frame.draw(
-                    &self.vbo,
-                    &self.ibo,
-                    &self.program,
-                    &uniforms,
-                    &draw_params).unwrap();
+                frame.clear_color_and_depth((0.1, 0.1, 0.3, 0.0), 0.0);
+
+                asset::with_local_resource_mgr(|res_mgr| {
+                    let program = res_mgr.get(&self.program);
+                    let texture = res_mgr.get(&self.tex);
+                    let uniforms = uniform! {
+                            tex: texture.raw_texture.sampled().magnify_filter(MagnifySamplerFilter::Linear)
+                                .minify_filter(MinifySamplerFilter::LinearMipmapLinear),
+                            wvp_matrix: wvp_mat_arr
+                        };
+                    frame.draw(
+                        &self.vbo,
+                        &self.ibo,
+                        &program,
+                        &uniforms,
+                        &draw_params).unwrap();
+                });
             }
         });
     }

@@ -9,7 +9,7 @@ use serde_json;
 use serde::Deserialize;
 use glium;
 use glium::{Display, VertexBuffer, IndexBuffer, Surface, Program};
-use specs::{Component, VecStorage, System, ReadStorage};
+use specs::{Component, VecStorage, System, ReadStorage, World, ReadExpect};
 use specs::Join;
 use uuid::Uuid;
 
@@ -54,33 +54,15 @@ impl LoadableAsset for SpriteSheetConfig {
 #[derive(Clone)]
 pub struct Sprite {
     pub config: SpriteConfig,
-    pub sheet_uuid: Uuid,
 }
 
 pub struct SpriteSheet {
     pub sprites: Vec<Sprite>,
-    pub texture: Texture,
+    pub texture: ResourceRef<Texture>,
     pub ppu: u32,
-    pub uuid: Uuid
 }
 
 impl SpriteSheet {
-    pub fn as_ref(&self) -> SpriteSheetRef {
-        SpriteSheetRef {
-            uuid: self.uuid,
-            sprites: (&self.sprites).into_iter()
-                .enumerate()
-                .map(|(pos, e)| {
-                    SpriteRef {
-                        name: e.config.name.clone(),
-                        idx: pos,
-                        sheet_uuid: self.uuid
-                    }
-                })
-                .collect()
-        }
-    }
-
     pub fn find_sprite(&self, name: &str) -> Option<&Sprite> {
         self.sprites.iter().find(|x| &x.config.name == name)
     }
@@ -91,44 +73,50 @@ impl SpriteSheet {
 
 #[derive(Clone)]
 pub struct SpriteRef {
-    pub sheet_uuid: Uuid,
+    pub sheet: ResourceRef<SpriteSheet>,
     pub idx: usize,
-    pub name: String,
 }
 
-pub struct SpriteSheetRef {
-    pub sprites: Vec<SpriteRef>,
-    pub uuid: Uuid
+impl SpriteRef {
+    pub fn new(sheet: ResourceRef<SpriteSheet>, idx: usize) -> Self {
+        Self {
+            sheet,
+            idx
+        }
+    }
 }
 
-pub fn load_sprite_sheet(display: &Display, path: &str) -> io::Result<SpriteSheetRef> {
-    let config: SpriteSheetConfig = asset::load_asset(path)?;
-    let texture: Texture = graphics::load_texture(display,
-                                                  &asset::get_asset_path_local(&config._path, &config.texture));
-    let uuid = Uuid::new_v4();
-
-    let sprites: Vec<Sprite> = (&config.sprites).into_iter()
-        .map(|x| Sprite { config: x.clone(), sheet_uuid: uuid })
-        .collect();
-
-    let sheet = SpriteSheet {
-        texture,
-        sprites,
-        uuid,
-        ppu: config.ppu,
-    };
-    let sheet_ref = sheet.as_ref();
-    LOADED_SPRITE_SHEETS.with(|ref_cell| {
-        ref_cell.borrow_mut().insert(uuid, sheet)
-    });
-
-    Ok(sheet_ref)
+/// A Resource
+pub struct SpriteSheetManager {
+    resource_pool: ResourcePool<SpriteSheet>,
 }
 
-pub fn unload_sprite_sheet(uuid: Uuid) {
-    LOADED_SPRITE_SHEETS.with(|ref_cell| {
-        ref_cell.borrow_mut().remove(&uuid);
-    });
+impl SpriteSheetManager {
+
+    fn new() -> Self {
+        Self {
+            resource_pool: ResourcePool::new()
+        }
+    }
+
+    pub fn load(&mut self, display: &Display, path: &str) -> io::Result<ResourceRef<SpriteSheet>> {
+        let config: SpriteSheetConfig = asset::load_asset(path)?;
+        let texture = graphics::load_texture(display,
+                                             &asset::get_asset_path_local(&config._path, &config.texture));
+
+        let sprites: Vec<Sprite> = (&config.sprites).into_iter()
+            .map(|x| Sprite { config: x.clone() })
+            .collect();
+
+        let sheet = SpriteSheet {
+            texture,
+            sprites,
+            ppu: config.ppu,
+        };
+
+        Ok(self.resource_pool.add(sheet))
+    }
+
 }
 
 pub struct SpriteRenderer {
@@ -184,7 +172,7 @@ struct SpriteRenderSystem {
     vbo: VertexBuffer<SpriteVertex>,
     instance_buf: VertexBuffer<SpriteInstanceData>,
     ibo: IndexBuffer<u16>,
-    sprite_program: Program,
+    sprite_program: ResourceRef<Program>,
     display: Rc<Display>
 }
 
@@ -217,16 +205,17 @@ impl SpriteRenderSystem {
         }
     }
 
-    fn _flush_current_batch(&mut self, batch: Batch) {
-        LOADED_SPRITE_SHEETS.with(|refcell| {
-            let m = refcell.borrow();
-            let sheet = m.get(&batch.sheet_uuid).unwrap();
+    fn _flush_current_batch(&mut self, sprite_mgr: &SpriteSheetManager, batch: Batch) {
+        let sheet = sprite_mgr.resource_pool.get(&batch.sheet);
 
-            let instance_data = (&batch.sprites).iter()
-                .map(|x| {
-                    let sprite_ref = &sheet.sprites[x.idx];
-                    let tex_width = sheet.texture.raw_texture.width() as f32;
-                    let tex_height = sheet.texture.raw_texture.height() as f32;
+        let instance_data = (&batch.sprites).iter()
+            .map(|x| {
+                let sprite_ref = &sheet.sprites[x.idx];
+
+                asset::with_local_resource_mgr(|res_mgr| {
+                    let texture = res_mgr.get(&sheet.texture);
+                    let tex_width = texture.raw_texture.width() as f32;
+                    let tex_height = texture.raw_texture.height() as f32;
 
                     let tuv1: Vec2 = sprite_ref.config.pos - sprite_ref.config.size * 0.5;
                     let tuv2: Vec2 = sprite_ref.config.pos + sprite_ref.config.size * 0.5;
@@ -243,48 +232,50 @@ impl SpriteRenderSystem {
                         i_uv_max: [u2, v2]
                     }
                 })
-                .collect::<Vec<_>>();
+            })
+            .collect::<Vec<_>>();
 
-            // if instance_data.len() != batch.sprites.len() {
-            self.instance_buf = VertexBuffer::dynamic(&*self.display, &instance_data).unwrap();
-            // } else {
-            //     self.instance_buf.write(&instance_data);
-            // }
+        // if instance_data.len() != batch.sprites.len() {
+        self.instance_buf = VertexBuffer::dynamic(&*self.display, &instance_data).unwrap();
+        // } else {
+        //     self.instance_buf.write(&instance_data);
+        // }
 
-            graphics::with_render_data(|r| {
-                let camera_infos = &r.camera_infos;
-                let frame = &mut r.frame;
-                for cam in camera_infos {
-                    let wvp_mat: [[f32; 4]; 4] = cam.wvp_matrix.into();
+        graphics::with_render_data(|r| {
+            let camera_infos = &r.camera_infos;
+            let frame = &mut r.frame;
+            for cam in camera_infos {
+                let wvp_mat: [[f32; 4]; 4] = cam.wvp_matrix.into();
+
+                asset::with_local_resource_mgr(|res_mgr| {
+                    let texture = res_mgr.get(&sheet.texture);
                     let uniforms = glium::uniform! {
                         u_proj: wvp_mat,
-                        u_texture: &sheet.texture.raw_texture
+                        u_texture: &texture.raw_texture
                     };
 
                     if let Some(material) = &batch.material {
-                        asset::with_local_resource(&material.program, |program: &mut Program| {
-                            asset::with_local_resource_pool(|texture_pool: &mut ResourcePool<Texture>| {
-                                let mat_uniforms = material.as_uniforms(&texture_pool);
-                                let uniforms =
-                                    graphics::MaterialCombinedUniforms::new(uniforms, mat_uniforms);
-                                frame.draw(
-                                    (&self.vbo, self.instance_buf.per_instance().unwrap()),
-                                    &self.ibo,
-                                    program,
-                                    &uniforms,
-                                    &Default::default()).unwrap();
-                            });
-                        });
-                    } else {
+                        let program = res_mgr.get(&material.program);
+                        let mat_uniforms = material.as_uniforms(&res_mgr);
+                        let uniforms =
+                            graphics::MaterialCombinedUniforms::new(uniforms, mat_uniforms);
                         frame.draw(
                             (&self.vbo, self.instance_buf.per_instance().unwrap()),
                             &self.ibo,
-                            &self.sprite_program,
+                            program,
+                            &uniforms,
+                            &Default::default()).unwrap();
+                    } else {
+                        let program = res_mgr.get(&self.sprite_program);
+                        frame.draw(
+                            (&self.vbo, self.instance_buf.per_instance().unwrap()),
+                            &self.ibo,
+                            program,
                             &uniforms,
                             &Default::default()).unwrap();
                     }
-                }
-            });
+                });
+            }
         });
     }
 }
@@ -295,15 +286,15 @@ struct SpriteInstance {
 }
 
 struct Batch {
-    sheet_uuid: Uuid,
+    sheet: ResourceRef<SpriteSheet>,
     sprites: Vec<SpriteInstance>,
     material: Option<Material>
 }
 
 impl<'a> System<'a> for SpriteRenderSystem {
-    type SystemData = (ReadStorage<'a, SpriteRenderer>, ReadStorage<'a, Transform>);
+    type SystemData = (ReadExpect<'a, SpriteSheetManager>, ReadStorage<'a, SpriteRenderer>, ReadStorage<'a, Transform>);
 
-    fn run(&mut self, (sr_vec, trans_vec): Self::SystemData) {
+    fn run(&mut self, (sprite_mgr, sr_vec, trans_vec): Self::SystemData) {
         let mut cur_batch: Option<Batch> = None;
         for (trans, sr) in (&trans_vec, &sr_vec).join() {
             let world_view: Mat4 = math::Mat4::from_translation(trans.pos) * Mat4::from(trans.rot);
@@ -316,20 +307,20 @@ impl<'a> System<'a> for SpriteRenderSystem {
             // Has last batch
             if let Some(mut cur_taken) = cur_taken {
                 // TODO: Add material difference telling
-                if cur_taken.sheet_uuid == sr.sprite.sheet_uuid { // Can batch, add to list
+                if cur_taken.sheet == sr.sprite.sheet { // Can batch, add to list
                     cur_taken.sprites.push(sprite_instance);
                     cur_batch = Some(cur_taken);
                 } else { // Can't batch, flush current && set now as now
-                    self._flush_current_batch(cur_taken);
+                    self._flush_current_batch(&sprite_mgr, cur_taken);
                     cur_batch = Some(Batch {
-                        sheet_uuid: sr.sprite.sheet_uuid,
+                        sheet: sr.sprite.sheet.clone(),
                         sprites: vec![sprite_instance],
                         material: sr.material.clone() // FIXME: Useless clone
                     });
                 }
             } else { // No previous batch, set one
                 cur_batch = Some(Batch {
-                    sheet_uuid: sr.sprite.sheet_uuid,
+                    sheet: sr.sprite.sheet.clone(),
                     sprites: vec![sprite_instance],
                     material: sr.material.clone()
                 });
@@ -338,12 +329,14 @@ impl<'a> System<'a> for SpriteRenderSystem {
 
         // Flush final batch
         if let Some(final_batch) = cur_batch.take() {
-            self._flush_current_batch(final_batch);
+            self._flush_current_batch(&sprite_mgr, final_batch);
         }
     }
-}
 
-// TODO: Make this instanced per Runtime
-thread_local! {
-static LOADED_SPRITE_SHEETS: RefCell<HashMap<Uuid, SpriteSheet>> = RefCell::new(HashMap::new());
+    // https://specs.amethyst.rs/docs/tutorials/07_setup.html#custom-setup-functionality
+    fn setup(&mut self, world: &mut World) {
+        use specs::SystemData;
+        Self::SystemData::setup(world);
+        world.insert(SpriteSheetManager::new());
+    }
 }

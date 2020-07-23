@@ -71,11 +71,18 @@ fn get_fs_path(path: &str) -> Box<Path> {
     return Path::new(unsafe { BASE_ASSET_PATH }).join(path).into_boxed_path();
 }
 
+#[derive(Eq)]
 pub struct ResourceRef<T> {
     idx: usize,
     type_id: TypeId,
     ref_cnt: Arc<u32>,
     marker: PhantomData<T>
+}
+
+impl<T> PartialEq for ResourceRef<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.idx == other.idx
+    }
 }
 
 // PhantomData 只当做一个类型标记，实际上能够跨线程同步
@@ -84,7 +91,7 @@ unsafe impl<T> Sync for ResourceRef<T> {}
 
 impl<T> Drop for ResourceRef<T> {
     fn drop(&mut self) {
-        *Arc::get_mut(&mut self.ref_cnt).unwrap() -= 1;
+        // *Arc::get_mut(&mut self.ref_cnt).unwrap() -= 1;
     }
 }
 
@@ -97,7 +104,7 @@ impl<T> Clone for ResourceRef<T> {
             ref_cnt: self.ref_cnt.clone()
         };
 
-        *Arc::get_mut(&mut ret.ref_cnt).unwrap() += 1;
+        // *Arc::get_mut(&mut ret.ref_cnt).unwrap() += 1;
 
         ret
     }
@@ -187,51 +194,68 @@ impl<T> LocalResourcePool for ResourcePool<T> where T: 'static {
 pub fn add_local_resource<T>(res: T) -> ResourceRef<T>
 where T: 'static
 {
-    let type_id = TypeId::of::<T>();
     ALL_RESOURCES.with(|ref_cell| {
-        let mut map = ref_cell.borrow_mut();
-        if !map.contains_key(&type_id) {
-            let res_pool: ResourcePool<T> = ResourcePool::new();
-            map.insert(type_id, Box::new(res_pool));
-        }
-
-        let pool: &mut ResourcePool<T> = map.get_mut(&type_id).unwrap().as_any_mut().downcast_mut().unwrap();
-        pool.add(res)
+        ref_cell.borrow_mut().add(res)
     })
 }
 
-pub fn with_local_resource<T, F>(res_ref: &ResourceRef<T>, f: F)
-where F: FnOnce(&mut T), T: 'static
+pub fn with_local_resource_mgr<F, R>(f: F) -> R
+    where F: FnOnce(&mut LocalResourcesManager) -> R
 {
     ALL_RESOURCES.with(|ref_cell| {
-        let mut map = ref_cell.borrow_mut();
-        let pool: &mut ResourcePool<T> = map.get_mut(&res_ref.type_id).unwrap().as_any_mut().downcast_mut().unwrap();
-        let res = &mut pool.entries[res_ref.idx].as_mut().unwrap().resource;
-        f(res);
-    });
-}
-
-pub fn with_local_resource_pool<T, F>(f: F)
-where F: FnOnce(&mut ResourcePool<T>), T: 'static
-{
-    let type_id = TypeId::of::<T>();
-    ALL_RESOURCES.with(|ref_cell| {
-        let mut map = ref_cell.borrow_mut();
-        let pool: &mut ResourcePool<T> = map.get_mut(&type_id).unwrap().as_any_mut().downcast_mut().unwrap();
-        f(pool);
-    });
+        let mut mgr_ref = ref_cell.borrow_mut();
+        f(&mut mgr_ref)
+    })
 }
 
 /// 帧末清理引用数为0的thread local资源
 pub fn cleanup_local_resources() {
     ALL_RESOURCES.with(|ref_cell| {
-        let mut m = ref_cell.borrow_mut();
-        for (_, v) in &mut *m {
-            v.cleanup();
-        }
+        ref_cell.borrow_mut().cleanup();
     })
 }
 
+pub struct LocalResourcesManager {
+    map: HashMap<TypeId, Box<dyn LocalResourcePool>>
+}
+
+impl LocalResourcesManager {
+    fn new() -> Self {
+        Self {
+            map: HashMap::new()
+        }
+    }
+
+    pub fn add<T: 'static>(&mut self, res: T) -> ResourceRef<T> {
+        let type_id = TypeId::of::<T>();
+        if !self.map.contains_key(&type_id) {
+            let res_pool: ResourcePool<T> = ResourcePool::new();
+            self.map.insert(type_id, Box::new(res_pool));
+        }
+
+        let pool: &mut ResourcePool<T> = self.map.get_mut(&type_id).unwrap().as_any_mut().downcast_mut().unwrap();
+        pool.add(res)
+    }
+
+    pub fn get<T: 'static>(&self, res_ref: &ResourceRef<T>) -> &T {
+        let pool: &ResourcePool<T> = self.map
+            .get(&res_ref.type_id).unwrap().as_any().downcast_ref().unwrap();
+        pool.get(res_ref)
+    }
+
+    pub fn get_mut<T: 'static>(&mut self, res_ref: &ResourceRef<T>) -> &mut T {
+        let mut pool: &mut ResourcePool<T> = self.map
+            .get_mut(&res_ref.type_id).unwrap().as_any_mut().downcast_mut().unwrap();
+        pool.get_mut(&res_ref)
+    }
+
+    pub fn cleanup(&mut self) {
+        for (_, v) in &mut self.map {
+            v.cleanup();
+        }
+    }
+}
+
 thread_local! {
-static ALL_RESOURCES: RefCell<HashMap<TypeId, Box<dyn LocalResourcePool>>> = RefCell::new(HashMap::new());
+static ALL_RESOURCES: RefCell<LocalResourcesManager> = RefCell::new(LocalResourcesManager::new());
 }

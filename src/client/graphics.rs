@@ -9,7 +9,8 @@ use serde::Deserialize;
 use serde_json;
 use specs::prelude::*;
 
-use crate::asset::{load_asset, load_asset_local, LoadableAsset, ResourceRef, ResourcePool};
+use crate::asset;
+use crate::asset::{load_asset, load_asset_local, LoadableAsset, ResourceRef, LocalResourcesManager};
 use crate::client::WindowInfo;
 use crate::ecs::Transform;
 use crate::glium;
@@ -97,14 +98,16 @@ pub fn with_render_data<F>(f: F)
     });
 }
 
-pub fn load_shader(display: &Display, path: &str) -> Program {
+pub fn load_shader(display: &Display, path: &str)
+    -> ResourceRef<Program> {
     let config: ShaderConfig = load_asset(path).unwrap();
     let vert: String = crate::asset::load_asset_local(&config._path, &config.vertex).unwrap();
     let frag: String = crate::asset::load_asset_local(&config._path, &config.fragment).unwrap();
     load_shader_by_content(&display, &vert, &frag)
 }
 
-pub fn load_shader_by_content(display: &Display, vertex: &str, fragment: &str) -> Program {
+pub fn load_shader_by_content(display: &Display, vertex: &str, fragment: &str)
+    -> ResourceRef<Program> {
     let program_input = ProgramCreationInput::SourceCode {
         vertex_shader: vertex,
         fragment_shader: fragment,
@@ -115,10 +118,11 @@ pub fn load_shader_by_content(display: &Display, vertex: &str, fragment: &str) -
         outputs_srgb: false,
         uses_point_size: false,
     };
-    Program::new(&*display, program_input).unwrap()
+
+    asset::add_local_resource(Program::new(&*display, program_input).unwrap())
 }
 
-pub fn load_texture(display: &Display, path: &str) -> Texture {
+pub fn load_texture(display: &Display, path: &str) -> ResourceRef<Texture> {
     let config: TextureConfig = load_asset(path).unwrap();
     let img_bytes: Vec<u8> = load_asset_local(&config._path, &config.image).unwrap();
     let img = image::load_from_memory_with_format(&img_bytes,
@@ -127,10 +131,11 @@ pub fn load_texture(display: &Display, path: &str) -> Texture {
     let img = RawImage2d::from_raw_rgba(img.into_rgba().into_vec(), img_dims);
     let raw_texture = glium::texture::CompressedSrgbTexture2d::new(display, img).unwrap();
 
-    Texture {
+    let ret = Texture {
         uuid: Uuid::new_v4(),
         raw_texture
-    }
+    };
+    asset::add_local_resource(ret)
 }
 
 fn init_render_data(data: FrameRenderData) {
@@ -250,14 +255,14 @@ pub struct Material {
 
 impl Material {
 
-    pub fn as_uniforms<'a>(&self, tex_pool: &'a ResourcePool<Texture>) -> MaterialUniforms<'a> {
+    pub fn as_uniforms<'a>(&self, res_mgr: &'a LocalResourcesManager) -> MaterialUniforms<'a> {
         let properties: HashMap<_, _> = self.uniforms.iter()
             .map(|(k, v)| {
                 let uniform_value = match v {
                     MatProperty::Float(f) => UniformValue::Float(f.clone()),
                     MatProperty::Mat4(m) => UniformValue::Mat4(m.clone()),
                     MatProperty::Sampler(s) =>
-                        UniformValue::CompressedSrgbTexture2d(&tex_pool.get(s).raw_texture, None)
+                        UniformValue::CompressedSrgbTexture2d(&res_mgr.get(s).raw_texture, None)
                 };
                 (k.clone(), uniform_value)
             })

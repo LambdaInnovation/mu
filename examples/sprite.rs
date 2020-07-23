@@ -1,4 +1,4 @@
-use mu::client::sprite::{SpriteModule, SpriteRenderer};
+use mu::client::sprite::{SpriteModule, SpriteRenderer, SpriteRef, SpriteSheetManager};
 use mu::client::graphics::{GraphicsModule, Camera, CameraProjection};
 use mu::{RuntimeBuilder, Module, StartData, math};
 use mu::client::sprite;
@@ -10,8 +10,9 @@ struct MyModule;
 
 impl Module for MyModule {
     fn start(&self, start_data: &mut StartData) {
-        let sheet_ref = sprite::load_sprite_sheet(&start_data.display, "texture/test_grid.sheet.json").unwrap();
-        let sprite_ref = &sheet_ref.sprites[0];
+        let sheet_ref = start_data.world.write_resource::<SpriteSheetManager>()
+            .load(&start_data.display, "texture/test_grid.sheet.json").unwrap();
+        let sprite_ref = SpriteRef::new(sheet_ref, 0);
 
         start_data.world.create_entity()
             .with(Transform::new().pos(math::vec3(0., 1., 0.)))

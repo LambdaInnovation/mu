@@ -6,6 +6,8 @@ use specs::System;
 use specs::{ReadExpect};
 use mu::ecs::Time;
 use mu::client::editor::EditorModule;
+use mu::asset::ResourceRef;
+use mu::asset;
 
 #[derive(Copy, Clone)]
 struct TriangleVertex {
@@ -15,7 +17,7 @@ struct TriangleVertex {
 glium::implement_vertex!(TriangleVertex, position);
 
 struct DrawTriangleSystem {
-    program: glium::Program,
+    program: ResourceRef<glium::Program>,
     vbo: glium::VertexBuffer<TriangleVertex>,
     elapsed: f32
 }
@@ -69,12 +71,15 @@ impl<'a> System<'a> for DrawTriangleSystem {
             };
 
             r.frame.clear_color_and_depth((0.3, 0.1, 0.1, 0.0), 0.0);
-            r.frame.draw(
-                &self.vbo,
-                glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList),
-                &self.program,
-                &uniform,
-                &draw_params).unwrap();
+            asset::with_local_resource_mgr(|mgr| {
+                let program = mgr.get(&self.program);
+                r.frame.draw(
+                    &self.vbo,
+                    glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList),
+                    program,
+                    &uniform,
+                    &draw_params).unwrap();
+            });
         });
     }
 }
