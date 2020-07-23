@@ -113,6 +113,12 @@ pub struct ResourcePool<T> where T: 'static {
     free_indices: Vec<usize>,
 }
 
+trait LocalResourcePool {
+    fn cleanup(&mut self);
+    fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
 impl<T> ResourcePool<T> where T: 'static {
 
     pub fn new() -> Self {
@@ -154,6 +160,30 @@ impl<T> ResourcePool<T> where T: 'static {
     }
 }
 
+impl<T> LocalResourcePool for ResourcePool<T> where T: 'static {
+    fn cleanup(&mut self) {
+        for (ix, item) in (&mut self.entries).iter_mut().enumerate() {
+            let need_remove = match item {
+                Some(x) if *x.ref_cnt == 0 => true,
+                _ => false
+            };
+
+            if need_remove {
+                item.take();
+                self.free_indices.push(ix);
+            }
+        }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
 pub fn add_local_resource<T>(res: T) -> ResourceRef<T>
 where T: 'static
 {
@@ -161,11 +191,11 @@ where T: 'static
     ALL_RESOURCES.with(|ref_cell| {
         let mut map = ref_cell.borrow_mut();
         if !map.contains_key(&type_id) {
-            let hash_map: HashMap<TypeId, ResourcePool<T>> = HashMap::new();
-            map.insert(type_id, Box::new(hash_map));
+            let res_pool: ResourcePool<T> = ResourcePool::new();
+            map.insert(type_id, Box::new(res_pool));
         }
 
-        let pool: &mut ResourcePool<T> = map.get_mut(&type_id).unwrap().downcast_mut().unwrap();
+        let pool: &mut ResourcePool<T> = map.get_mut(&type_id).unwrap().as_any_mut().downcast_mut().unwrap();
         pool.add(res)
     })
 }
@@ -175,7 +205,7 @@ where F: FnOnce(&mut T), T: 'static
 {
     ALL_RESOURCES.with(|ref_cell| {
         let mut map = ref_cell.borrow_mut();
-        let pool: &mut ResourcePool<T> = map.get_mut(&res_ref.type_id).unwrap().downcast_mut().unwrap();
+        let pool: &mut ResourcePool<T> = map.get_mut(&res_ref.type_id).unwrap().as_any_mut().downcast_mut().unwrap();
         let res = &mut pool.entries[res_ref.idx].as_mut().unwrap().resource;
         f(res);
     });
@@ -187,11 +217,21 @@ where F: FnOnce(&mut ResourcePool<T>), T: 'static
     let type_id = TypeId::of::<T>();
     ALL_RESOURCES.with(|ref_cell| {
         let mut map = ref_cell.borrow_mut();
-        let pool: &mut ResourcePool<T> = map.get_mut(&type_id).unwrap().downcast_mut().unwrap();
+        let pool: &mut ResourcePool<T> = map.get_mut(&type_id).unwrap().as_any_mut().downcast_mut().unwrap();
         f(pool);
     });
 }
 
+/// 帧末清理引用数为0的thread local资源
+pub fn cleanup_local_resources() {
+    ALL_RESOURCES.with(|ref_cell| {
+        let mut m = ref_cell.borrow_mut();
+        for (_, v) in &mut *m {
+            v.cleanup();
+        }
+    })
+}
+
 thread_local! {
-static ALL_RESOURCES: RefCell<HashMap<TypeId, Box<dyn Any>>> = RefCell::new(HashMap::new());
+static ALL_RESOURCES: RefCell<HashMap<TypeId, Box<dyn LocalResourcePool>>> = RefCell::new(HashMap::new());
 }

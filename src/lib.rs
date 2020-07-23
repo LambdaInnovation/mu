@@ -420,6 +420,8 @@ impl Runtime {
             display.gl_window().window().set_cursor_grab(window_info.grab_cursor_count > 0)
                 .unwrap_or_default();
         }
+
+        asset::cleanup_local_resources();
     }
 
 }
