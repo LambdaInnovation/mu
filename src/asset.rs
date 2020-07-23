@@ -3,11 +3,12 @@ use std::io;
 use std::path::Path as Path;
 use std::collections::HashMap;
 use std::cell::{RefCell, RefMut};
-use std::any::{TypeId, Any};
+use std::any::{TypeId, Any, type_name};
 use std::borrow::{Borrow};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::ops::{SubAssign, AddAssign};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 static mut BASE_ASSET_PATH: &str = "./assets/";
 
@@ -71,31 +72,34 @@ fn get_fs_path(path: &str) -> Box<Path> {
     return Path::new(unsafe { BASE_ASSET_PATH }).join(path).into_boxed_path();
 }
 
-#[derive(Eq)]
-pub struct ResourceRef<T> {
+pub struct ResourceRef<T: 'static> {
     idx: usize,
     type_id: TypeId,
-    ref_cnt: Arc<u32>,
+    ref_cnt: Arc<AtomicU32>,
     marker: PhantomData<T>
 }
 
-impl<T> PartialEq for ResourceRef<T> {
+impl<T: 'static> PartialEq for ResourceRef<T> {
     fn eq(&self, other: &Self) -> bool {
         self.idx == other.idx
     }
 }
 
-// PhantomData 只当做一个类型标记，实际上能够跨线程同步
-unsafe impl<T> Send for ResourceRef<T> {}
-unsafe impl<T> Sync for ResourceRef<T> {}
+impl<T: 'static> Eq for ResourceRef<T> {
+}
 
-impl<T> Drop for ResourceRef<T> {
+// PhantomData 只当做一个类型标记，实际上能够跨线程同步
+unsafe impl<T: 'static> Send for ResourceRef<T> {}
+unsafe impl<T: 'static> Sync for ResourceRef<T> {}
+
+impl<T: 'static> Drop for ResourceRef<T> {
     fn drop(&mut self) {
-        // *Arc::get_mut(&mut self.ref_cnt).unwrap() -= 1;
+        let remain = self.ref_cnt.fetch_sub(1, Ordering::SeqCst);
+        // info!("Sub resCount {:?} = {}", std::any::type_name::<T>(), remain);
     }
 }
 
-impl<T> Clone for ResourceRef<T> {
+impl<T: 'static> Clone for ResourceRef<T> {
     fn clone(&self) -> Self {
         let mut ret = Self {
             idx: self.idx,
@@ -104,7 +108,8 @@ impl<T> Clone for ResourceRef<T> {
             ref_cnt: self.ref_cnt.clone()
         };
 
-        // *Arc::get_mut(&mut ret.ref_cnt).unwrap() += 1;
+        let cnt = self.ref_cnt.fetch_add(1, Ordering::SeqCst);
+        // info!("Add resCount {:?} = {}", std::any::type_name::<T>(), cnt);
 
         ret
     }
@@ -112,7 +117,7 @@ impl<T> Clone for ResourceRef<T> {
 
 struct ResourceEntry<T> {
     resource: T,
-    ref_cnt: Arc<u32>
+    ref_cnt: Arc<AtomicU32>
 }
 
 pub struct ResourcePool<T> where T: 'static {
@@ -136,7 +141,7 @@ impl<T> ResourcePool<T> where T: 'static {
     }
 
     pub fn add(&mut self, res: T) -> ResourceRef<T> {
-        let ref_cnt = Arc::new(1);
+        let ref_cnt = Arc::new(AtomicU32::new(1));
         let resource_entry = ResourceEntry {
             resource: res,
             ref_cnt: ref_cnt.clone()
@@ -171,7 +176,7 @@ impl<T> LocalResourcePool for ResourcePool<T> where T: 'static {
     fn cleanup(&mut self) {
         for (ix, item) in (&mut self.entries).iter_mut().enumerate() {
             let need_remove = match item {
-                Some(x) if *x.ref_cnt == 0 => true,
+                Some(x) if x.ref_cnt.load(Ordering::SeqCst) == 0 => true,
                 _ => false
             };
 
