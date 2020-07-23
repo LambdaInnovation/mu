@@ -1,6 +1,6 @@
 use crate::{asset, Module, InitData, InsertInfo, math};
 use crate::math::*;
-use crate::asset::{LoadableAsset, ResourceRef};
+use crate::asset::{LoadableAsset, ResourceRef, ResourcePool};
 use crate::client::graphics::{Texture, Material};
 use crate::client::graphics;
 use crate::ecs::Transform;
@@ -252,7 +252,9 @@ impl SpriteRenderSystem {
             // }
 
             graphics::with_render_data(|r| {
-                for cam in &r.camera_infos {
+                let camera_infos = &r.camera_infos;
+                let frame = &mut r.frame;
+                for cam in camera_infos {
                     let wvp_mat: [[f32; 4]; 4] = cam.wvp_matrix.into();
                     let uniforms = glium::uniform! {
                         u_proj: wvp_mat,
@@ -260,17 +262,21 @@ impl SpriteRenderSystem {
                     };
 
                     if let Some(material) = &batch.material {
-                        asset::with_resource(&material.program, |program: &mut Program| {
-                            let uniforms = graphics::MaterialCombinedUniforms::new(uniforms, material.uniforms.clone());
-                            r.frame.draw(
-                                (&self.vbo, self.instance_buf.per_instance().unwrap()),
-                                &self.ibo,
-                                program,
-                                &uniforms,
-                                &Default::default()).unwrap();
+                        asset::with_local_resource(&material.program, |program: &mut Program| {
+                            asset::with_local_resource_pool(|texture_pool: &mut ResourcePool<Texture>| {
+                                let mat_uniforms = material.as_uniforms(&texture_pool);
+                                let uniforms =
+                                    graphics::MaterialCombinedUniforms::new(uniforms, mat_uniforms);
+                                frame.draw(
+                                    (&self.vbo, self.instance_buf.per_instance().unwrap()),
+                                    &self.ibo,
+                                    program,
+                                    &uniforms,
+                                    &Default::default()).unwrap();
+                            });
                         });
                     } else {
-                        r.frame.draw(
+                        frame.draw(
                             (&self.vbo, self.instance_buf.per_instance().unwrap()),
                             &self.ibo,
                             &self.sprite_program,

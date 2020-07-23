@@ -4,8 +4,10 @@ use std::path::Path as Path;
 use std::collections::HashMap;
 use std::cell::{RefCell, RefMut};
 use std::any::{TypeId, Any};
-use std::borrow::BorrowMut;
+use std::borrow::{Borrow};
 use std::marker::PhantomData;
+use std::sync::Arc;
+use std::ops::{SubAssign, AddAssign};
 
 static mut BASE_ASSET_PATH: &str = "./assets/";
 
@@ -72,50 +74,59 @@ fn get_fs_path(path: &str) -> Box<Path> {
 pub struct ResourceRef<T> {
     idx: usize,
     type_id: TypeId,
+    ref_cnt: Arc<u32>,
     marker: PhantomData<T>
 }
 
+// PhantomData 只当做一个类型标记，实际上能够跨线程同步
+unsafe impl<T> Send for ResourceRef<T> {}
+unsafe impl<T> Sync for ResourceRef<T> {}
+
 impl<T> Drop for ResourceRef<T> {
     fn drop(&mut self) {
-        // TODO: Reduce ref count
+        *Arc::get_mut(&mut self.ref_cnt).unwrap() -= 1;
     }
 }
 
 impl<T> Clone for ResourceRef<T> {
     fn clone(&self) -> Self {
-        // TODO: Add ref count
-
-        Self {
+        let mut ret = Self {
             idx: self.idx,
             type_id: self.type_id,
-            marker: PhantomData
-        }
+            marker: PhantomData,
+            ref_cnt: self.ref_cnt.clone()
+        };
+
+        *Arc::get_mut(&mut ret.ref_cnt).unwrap() += 1;
+
+        ret
     }
 }
 
 struct ResourceEntry<T> {
     resource: T,
-    ref_cnt: u32
+    ref_cnt: Arc<u32>
 }
 
-struct ResourcePool<T> where T: 'static {
+pub struct ResourcePool<T> where T: 'static {
     entries: Vec<Option<ResourceEntry<T>>>,
     free_indices: Vec<usize>,
 }
 
 impl<T> ResourcePool<T> where T: 'static {
 
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             entries: vec![],
             free_indices: vec![]
         }
     }
 
-    fn add(&mut self, res: T) -> ResourceRef<T> {
+    pub fn add(&mut self, res: T) -> ResourceRef<T> {
+        let ref_cnt = Arc::new(1);
         let resource_entry = ResourceEntry {
             resource: res,
-            ref_cnt: 1
+            ref_cnt: ref_cnt.clone()
         };
         let idx = if self.free_indices.is_empty() {
             self.entries.push(Some(resource_entry));
@@ -129,13 +140,21 @@ impl<T> ResourcePool<T> where T: 'static {
         ResourceRef {
             idx,
             type_id: TypeId::of::<T>(),
+            ref_cnt,
             marker: PhantomData
         }
     }
 
+    pub fn get(&self, res_ref: &ResourceRef<T>) -> &T {
+        & (&self.entries[res_ref.idx]).as_ref().unwrap().resource
+    }
+
+    pub fn get_mut(&mut self, res_ref: &ResourceRef<T>) -> &mut T {
+        &mut (&mut self.entries[res_ref.idx]).as_mut().unwrap().resource
+    }
 }
 
-pub fn add_resource<T>(res: T) -> ResourceRef<T>
+pub fn add_local_resource<T>(res: T) -> ResourceRef<T>
 where T: 'static
 {
     let type_id = TypeId::of::<T>();
@@ -151,23 +170,26 @@ where T: 'static
     })
 }
 
-pub fn with_resource<T, F>(res_ref: &ResourceRef<T>, f: F)
+pub fn with_local_resource<T, F>(res_ref: &ResourceRef<T>, f: F)
 where F: FnOnce(&mut T), T: 'static
 {
-    let type_id = TypeId::of::<T>();
-    assert_eq!(type_id, res_ref.type_id);
-
     ALL_RESOURCES.with(|ref_cell| {
         let mut map = ref_cell.borrow_mut();
-        let pool: &mut ResourcePool<T> = map.get_mut(&type_id).unwrap().downcast_mut().unwrap();
+        let pool: &mut ResourcePool<T> = map.get_mut(&res_ref.type_id).unwrap().downcast_mut().unwrap();
         let res = &mut pool.entries[res_ref.idx].as_mut().unwrap().resource;
         f(res);
     });
 }
 
-pub fn get_resource<T>(res_ref: &ResourceRef<T>) -> &T {
-    // let ref_mut = ALL_RESOURCES.w
-    // ref_mut
+pub fn with_local_resource_pool<T, F>(f: F)
+where F: FnOnce(&mut ResourcePool<T>), T: 'static
+{
+    let type_id = TypeId::of::<T>();
+    ALL_RESOURCES.with(|ref_cell| {
+        let mut map = ref_cell.borrow_mut();
+        let pool: &mut ResourcePool<T> = map.get_mut(&type_id).unwrap().downcast_mut().unwrap();
+        f(pool);
+    });
 }
 
 thread_local! {
