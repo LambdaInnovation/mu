@@ -17,6 +17,7 @@ impl ButtonState {
     }
 }
 
+/// Processed input data for raw input device (keyboard, mouse, controller, etc.)
 pub struct RawInputData {
     // Keyboard
     pub frame_character_list: Vec<char>,

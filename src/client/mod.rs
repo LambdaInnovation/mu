@@ -7,6 +7,7 @@ pub mod input;
 pub mod editor;
 pub mod sprite;
 
+/// A specs `Resource`. contains information about window.
 pub struct WindowInfo {
     pub frame_event_list: Vec<event::Event<'static, ()>>,
     pub grab_cursor_count: u32,

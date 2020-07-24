@@ -27,6 +27,7 @@ pub mod math;
 pub mod util;
 pub mod client;
 
+/// Helper struct for adding a sorted system.
 pub struct Insert<'a> {
     builder: &'a mut specs::DispatcherBuilder<'static, 'static>,
     name: &'a str,
@@ -35,21 +36,31 @@ pub struct Insert<'a> {
 
 impl<'a> Insert<'a> {
     pub fn insert<T>(self, system: T)
-    where
-        T: for<'x> specs::System<'x> + Send + 'static,
+        where
+            T: for<'x> specs::System<'x> + Send + 'static,
     {
-
         info!("insert {}", self.name);
         self.builder.add(system, self.name, self.deps);
     }
+}
+
+
+/// Helper struct for adding a sorted ThreadLocal system.
+pub struct InsertThreadLocal<'a> {
+    builder: &'a mut specs::DispatcherBuilder<'static, 'static>,
+    name: &'a str,
+}
+
+impl<'a> InsertThreadLocal<'a> {
 
     pub fn insert_thread_local<T: 'static>(self, system: T)
-    where
-        T: for<'x> specs::RunNow<'x> + 'static,
+        where
+            T: for<'x> specs::RunNow<'x> + 'static,
     {
         info!("insert_thread_local {}", self.name);
         self.builder.add_thread_local(system);
     }
+
 }
 
 pub struct InsertInfo {
@@ -89,50 +100,85 @@ impl InsertInfo {
     }
 }
 
+trait TDispatchItem {
+    fn insert_info(&self) -> &InsertInfo;
+}
+
 struct DispatchItem {
     info: InsertInfo,
     func: Box<dyn FnOnce(Insert)>,
 }
 
-struct DispatchGroup {
-    items: Vec<DispatchItem>,
+impl TDispatchItem for DispatchItem {
+    fn insert_info(&self) -> &InsertInfo {
+        &self.info
+    }
 }
 
-impl DispatchGroup {
-    pub fn new() -> Self {
-        Self { items: vec![] }
-    }
+struct ThreadLocalDispatchItem {
+    info: InsertInfo,
+    func: Box<dyn FnOnce(InsertThreadLocal)>,
+}
 
-    /// 添加一个 System 到全局的 DispatcherBuilder，在全部添加前会先正确的根据
-    /// deps 进行拓补排序，因此不需要关心添加的顺序。
-    ///
-    /// note: 这里非要用一个 closure 这么绕是因为 System 这个 trait 根本没法
-    /// 被存成一个 trait object，只能在函数调用中接续着用 trait bound 传递过去，
-    /// 实为无奈之举。
+impl TDispatchItem for ThreadLocalDispatchItem {
+
+    fn insert_info(&self) -> &InsertInfo {
+        &self.info
+    }
+}
+
+struct DispatchGroup<T: TDispatchItem> {
+    items: Vec<T>,
+}
+
+// FIXME: 这里的代码重复很丑，但是目前没找到办法通过generics很好的处理new Item的逻辑
+
+impl DispatchGroup<DispatchItem> {
+
     pub fn dispatch<F>(&mut self, info: InsertInfo, item: F)
-    where
-        F: FnOnce(Insert) + 'static,
+        where
+            F: FnOnce(Insert) + 'static,
     {
         self.items.push(DispatchItem {
             info,
             func: Box::new(item),
         });
     }
+}
 
-    pub fn post_dispatch(&mut self, builder: &mut specs::DispatcherBuilder<'static, 'static>) {
+impl DispatchGroup<ThreadLocalDispatchItem> {
+
+    pub fn dispatch<F>(&mut self, info: InsertInfo, item: F)
+        where
+            F: FnOnce(InsertThreadLocal) + 'static,
+    {
+        self.items.push(ThreadLocalDispatchItem {
+            info,
+            func: Box::new(item),
+        });
+    }
+}
+
+impl<T: TDispatchItem> DispatchGroup<T> {
+    pub fn new() -> Self {
+        Self { items: vec![] }
+    }
+
+    pub fn post_dispatch<F>(mut self, mut visitor: F) where F: FnMut(T) {
         use std::collections::HashMap;
         use std::collections::HashSet;
 
         // First, sort with order
-        self.items.sort_by_key(|x| x.info.order);
+        self.items.sort_by_key(|x| x.insert_info().order);
 
+        // Topology sort
         let sorted = {
             let mut visited_deps: HashSet<String> = HashSet::new();
             let mut before_deps: HashMap<String, usize> = HashMap::new();
-            let mut res: Vec<DispatchItem> = vec![];
+            let mut res: Vec<T> = vec![];
 
             for item in &self.items {
-                item.info.before_deps.iter().for_each(|x| {
+                item.insert_info().before_deps.iter().for_each(|x| {
                     let key = x.as_str();
                     let count = before_deps.get(key).map(|x| *x).unwrap_or(0) + 1;
                     before_deps.insert(x.clone(), count);
@@ -145,12 +191,12 @@ impl DispatchGroup {
                 while i < self.items.len() {
                     // Note: Can't use foreach because self.items will change
                     let has_after_dep = self.items[i]
-                        .info
+                        .insert_info()
                         .deps
                         .iter()
                         .find(|x| !visited_deps.contains(x.as_str()))
                         .is_some();
-                    let has_before_dep = before_deps.contains_key(self.items[i].info.name.as_str());
+                    let has_before_dep = before_deps.contains_key(self.items[i].insert_info().name.as_str());
 
                     let dep_unresolved = has_after_dep || has_before_dep;
                     if dep_unresolved {
@@ -158,8 +204,8 @@ impl DispatchGroup {
                     } else {
                         // info!("remove dep: {}", self.items[i].name);
                         let removed = self.items.remove(i);
-                        visited_deps.insert(removed.info.name.clone());
-                        removed.info.before_deps.iter().for_each(|x| {
+                        visited_deps.insert(removed.insert_info().name.clone());
+                        removed.insert_info().before_deps.iter().for_each(|x| {
                             let k = x.as_str();
                             let final_count = {
                                 let count_ref = before_deps.get_mut(k).unwrap();
@@ -179,7 +225,7 @@ impl DispatchGroup {
                     "Systems contains unresolvable dependency, remaining: {}, visited: {}",
                     self.items
                         .iter()
-                        .map(|x| format!("{}<-[{}]", x.info.name, x.info.deps.join("+")))
+                        .map(|x| format!("{}<-[{}]", x.insert_info().name, x.insert_info().deps.join("+")))
                         .collect::<Vec<_>>()
                         .join(","),
                     visited_deps
@@ -195,20 +241,15 @@ impl DispatchGroup {
         };
 
         for item in sorted {
-            let deps_vec: Vec<&str> = item.info.deps.iter().map(|x| x.as_str()).collect();
-            let insert = Insert {
-                builder,
-                name: item.info.name.as_str(),
-                deps: deps_vec.as_slice(),
-            };
-            (item.func)(insert);
+            visitor(item);
         }
     }
 }
 
+/// Data when game initializes. Usually used to setup all the systems.
 pub struct InitData {
-    group_normal: DispatchGroup,
-    group_thread_local: DispatchGroup,
+    group_normal: DispatchGroup<DispatchItem>,
+    group_thread_local: DispatchGroup<ThreadLocalDispatchItem>,
     pub display: Rc<Display>
 }
 
@@ -217,7 +258,7 @@ impl InitData {
         InitData {
             group_normal: DispatchGroup::new(),
             group_thread_local: DispatchGroup::new(),
-            display: display
+            display
         }
     }
 
@@ -227,27 +268,45 @@ impl InitData {
     {
         assert_eq!(info.order, 0, "Doesn't allow custom order");
         assert!(info.before_deps.is_empty(), "Doesn't allow before_deps");
+        info!("dispatch? {}", info.name);
         self.group_normal.dispatch(info, func);
     }
 
     pub fn dispatch_thread_local<F: 'static>(&mut self, info: InsertInfo, func: F)
     where
-        F: FnOnce(Insert) + 'static,
+        F: FnOnce(InsertThreadLocal) + 'static,
     {
         self.group_thread_local.dispatch(info, func);
     }
 
-    pub fn post_dispatch(mut self, builder: &mut specs::DispatcherBuilder<'static, 'static>) {
-        self.group_normal.post_dispatch(builder);
-        self.group_thread_local.post_dispatch(builder);
+    pub fn post_dispatch(self, builder: &mut specs::DispatcherBuilder<'static, 'static>) {
+        self.group_normal.post_dispatch(|info| {
+            let deps_vec: Vec<&str> = info.info.deps.iter().map(|x| x.as_str()).collect();
+            let insert = Insert {
+                builder,
+                name: info.info.name.as_str(),
+                deps: deps_vec.as_slice(),
+            };
+            (info.func)(insert);
+        });
+        self.group_thread_local.post_dispatch(|info| {
+            let insert = InsertThreadLocal {
+                builder,
+                name: info.info.name.as_str(),
+            };
+            (info.func)(insert);
+        });
     }
 }
 
+/// Data when just before game starts. Usually used to setup the world initial entities.
 pub struct StartData<'a> {
     pub world: &'a mut specs::World,
     pub display: Rc<Display>
 }
 
+/// Modules inject into the game's startup process, and are
+///  capable of adding Systems and Entities.
 pub trait Module {
     fn init(&self, _init_data: &mut InitData) {}
     fn start(&self, _start_data: &mut StartData) {}
@@ -256,6 +315,7 @@ pub trait Module {
     }
 }
 
+/// Use `RuntimeBuilder` to specify game's startup information and then start the game.
 pub struct RuntimeBuilder {
     name: String,
     modules: Vec<Box<dyn Module>>
@@ -337,6 +397,7 @@ impl RuntimeBuilder {
 
 }
 
+/// `Runtime` is the game's actual running context.
 pub struct Runtime {
     dispatcher: Dispatcher<'static, 'static>,
     world: World,
@@ -430,6 +491,8 @@ impl Runtime {
 
 }
 
+/// Mu supports multi-instance. Use this to setup common functionalities shared between `Runtime`'s.
+/// TODO: Simplify this
 pub fn common_init() {
     CombinedLogger::init(
         vec![

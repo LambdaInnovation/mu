@@ -33,12 +33,14 @@ pub struct Vec2SerdeRef {
     y: Float
 }
 
+/// Linearly interpolates between a and b with parameter t.
 #[inline]
 pub fn lerp<T>(a: T, b: T, t: T) -> T
 where T: Add<Output=T> + Sub<Output=T> + Mul<Output=T> + Copy {
     a + (b - a) * t
 }
 
+/// Limit x in the range of [min, max].
 #[inline]
 pub fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
     if x < min {

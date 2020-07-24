@@ -3,7 +3,7 @@ use std::io;
 use std::path::Path as Path;
 use std::collections::HashMap;
 use std::cell::{RefCell};
-use std::any::{TypeId, Any};
+use std::any::{TypeId, Any, type_name};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -150,7 +150,7 @@ impl<T> ResourcePool<T> where T: 'static {
     }
 
     pub fn add(&mut self, res: T) -> ResourceRef<T> {
-        let ref_cnt = Arc::new(AtomicU32::new(0));
+        let ref_cnt = Arc::new(AtomicU32::new(1));
         let resource_entry = ResourceEntry {
             resource: res,
             ref_cnt: ref_cnt.clone()
@@ -190,8 +190,12 @@ impl<T> ResPool for ResourcePool<T> where T: 'static {
             };
 
             if need_remove {
+                info!("Cleanup asset of type {}", type_name::<T>());
                 item.take();
                 self.free_indices.push(ix);
+            } else {
+                // info!("type {} ptr={:?}", type_name::<T>(),
+                //       (&item).as_ref().map(|x| x.ref_cnt.load(Ordering::SeqCst)));
             }
         }
     }
@@ -246,6 +250,20 @@ impl ResourceManager<dyn ResPool> {
         pool.add(res)
     }
 
+    pub fn get_pool_mut<T: 'static>(&mut self) -> &mut ResourcePool<T> {
+        let type_id = TypeId::of::<T>();
+        if !self.map.contains_key(&type_id) {
+            let res_pool: ResourcePool<T> = ResourcePool::new();
+            self.map.insert(type_id.clone(), Box::new(res_pool));
+        }
+        self.map.get_mut(&type_id).unwrap().as_any_mut().downcast_mut().unwrap()
+    }
+
+    pub fn get_mut<T: 'static>(&mut self, res_ref: &ResourceRef<T>) -> &mut T {
+        let pool: &mut ResourcePool<T> = self.get_pool_mut();
+        pool.get_mut(&res_ref)
+    }
+
 }
 
 impl ResourceManager<dyn ThreadedResPool> {
@@ -261,6 +279,20 @@ impl ResourceManager<dyn ThreadedResPool> {
         pool.add(res)
     }
 
+    pub fn get_pool_mut<T: 'static + Send + Sync>(&mut self) -> &mut ResourcePool<T> {
+        let type_id = TypeId::of::<T>();
+        if !self.map.contains_key(&type_id) {
+            let res_pool: ResourcePool<T> = ResourcePool::new();
+            self.map.insert(type_id.clone(), Box::new(res_pool));
+        }
+        self.map.get_mut(&type_id).unwrap().as_any_mut().downcast_mut().unwrap()
+    }
+
+    pub fn get_mut<T: 'static + Send + Sync>(&mut self, res_ref: &ResourceRef<T>) -> &mut T {
+        let pool: &mut ResourcePool<T> = self.get_pool_mut();
+        pool.get_mut(&res_ref)
+    }
+
 }
 
 impl<R: ResPool + ?Sized> ResourceManager<R> {
@@ -270,22 +302,13 @@ impl<R: ResPool + ?Sized> ResourceManager<R> {
         }
     }
 
-    pub fn get_pool<T: 'static>(&self) -> &ResourcePool<T> {
-        self.map.get(&TypeId::of::<T>()).unwrap().as_any().downcast_ref().unwrap()
-    }
-
-    pub fn get_pool_mut<T: 'static>(&mut self) -> &mut ResourcePool<T> {
-        self.map.get_mut(&TypeId::of::<T>()).unwrap().as_any_mut().downcast_mut().unwrap()
+    pub fn get_pool<T: 'static>(&self) -> Option<&ResourcePool<T>> {
+        self.map.get(&TypeId::of::<T>()).map(|x| x.as_any().downcast_ref().unwrap())
     }
 
     pub fn get<T: 'static>(&self, res_ref: &ResourceRef<T>) -> &T {
-        let pool: &ResourcePool<T> = self.get_pool();
+        let pool: &ResourcePool<T> = self.get_pool().unwrap();
         pool.get(res_ref)
-    }
-
-    pub fn get_mut<T: 'static>(&mut self, res_ref: &ResourceRef<T>) -> &mut T {
-        let pool: &mut ResourcePool<T> = self.get_pool_mut();
-        pool.get_mut(&res_ref)
     }
 
     pub fn cleanup(&mut self) {
