@@ -27,16 +27,16 @@ pub mod math;
 pub mod util;
 pub mod client;
 
-pub struct Insert<'a, 'c, 'd> {
-    builder: &'a mut specs::DispatcherBuilder<'c, 'd>,
+pub struct Insert<'a> {
+    builder: &'a mut specs::DispatcherBuilder<'static, 'static>,
     name: &'a str,
     deps: &'a [&'a str],
 }
 
-impl<'a, 'c, 'd> Insert<'a, 'c, 'd> {
+impl<'a> Insert<'a> {
     pub fn insert<T>(self, system: T)
     where
-        T: for<'x> specs::System<'x> + Send + 'c,
+        T: for<'x> specs::System<'x> + Send + 'static,
     {
 
         info!("insert {}", self.name);
@@ -45,7 +45,7 @@ impl<'a, 'c, 'd> Insert<'a, 'c, 'd> {
 
     pub fn insert_thread_local<T: 'static>(self, system: T)
     where
-        T: for<'x> specs::RunNow<'x> + 'c,
+        T: for<'x> specs::RunNow<'x> + 'static,
     {
         info!("insert_thread_local {}", self.name);
         self.builder.add_thread_local(system);
@@ -119,7 +119,7 @@ impl DispatchGroup {
         });
     }
 
-    pub fn post_dispatch(&mut self, builder: &mut specs::DispatcherBuilder) {
+    pub fn post_dispatch(&mut self, builder: &mut specs::DispatcherBuilder<'static, 'static>) {
         use std::collections::HashMap;
         use std::collections::HashSet;
 
@@ -237,7 +237,7 @@ impl InitData {
         self.group_thread_local.dispatch(info, func);
     }
 
-    pub fn post_dispatch(mut self, builder: &mut specs::DispatcherBuilder) {
+    pub fn post_dispatch(mut self, builder: &mut specs::DispatcherBuilder<'static, 'static>) {
         self.group_normal.post_dispatch(builder);
         self.group_thread_local.post_dispatch(builder);
     }
