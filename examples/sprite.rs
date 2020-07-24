@@ -1,16 +1,17 @@
-use mu::client::sprite::{SpriteModule, SpriteRenderer, SpriteRef, SpriteSheetManager};
+use mu::client::sprite::{SpriteModule, SpriteRenderer, SpriteRef, SpriteSheet};
 use mu::client::graphics::{GraphicsModule, Camera, CameraProjection};
 use mu::{RuntimeBuilder, Module, StartData, math};
-use mu::client::sprite;
 use specs::{WorldExt, Builder};
 use mu::ecs::Transform;
 use mu::util::Color;
+use mu::asset::ResManager;
 
 struct MyModule;
 
 impl Module for MyModule {
     fn start(&self, start_data: &mut StartData) {
-        let sheet_ref = start_data.world.write_resource::<SpriteSheetManager>()
+        let sheet_ref = start_data.world.write_resource::<ResManager>()
+            .get_pool_mut::<SpriteSheet>()
             .load(&start_data.display, "texture/test_grid.sheet.json").unwrap();
         let sprite_ref = SpriteRef::new(sheet_ref, 0);
 

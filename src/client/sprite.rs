@@ -1,6 +1,6 @@
 use crate::{asset, Module, InitData, InsertInfo, math};
 use crate::math::*;
-use crate::asset::{LoadableAsset, ResourceRef, ResourcePool};
+use crate::asset::{LoadableAsset, ResourceRef, ResourcePool, ResManager};
 use crate::client::graphics::{Texture, Material};
 use crate::client::graphics;
 use crate::ecs::Transform;
@@ -9,16 +9,12 @@ use serde_json;
 use serde::Deserialize;
 use glium;
 use glium::{Display, VertexBuffer, IndexBuffer, Surface, Program};
-use specs::{Component, VecStorage, System, ReadStorage, World, ReadExpect};
+use specs::{Component, VecStorage, System, ReadStorage, ReadExpect};
 use specs::Join;
-use uuid::Uuid;
 
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::io;
 use glium::index::PrimitiveType;
 use std::rc::Rc;
-use glium::uniforms::UniformsStorage;
 
 #[derive(Clone, Deserialize)]
 pub struct SpriteConfig {
@@ -86,18 +82,7 @@ impl SpriteRef {
     }
 }
 
-/// A Resource
-pub struct SpriteSheetManager {
-    resource_pool: ResourcePool<SpriteSheet>,
-}
-
-impl SpriteSheetManager {
-
-    fn new() -> Self {
-        Self {
-            resource_pool: ResourcePool::new()
-        }
-    }
+impl ResourcePool<SpriteSheet> {
 
     pub fn load(&mut self, display: &Display, path: &str) -> io::Result<ResourceRef<SpriteSheet>> {
         let config: SpriteSheetConfig = asset::load_asset(path)?;
@@ -114,9 +99,8 @@ impl SpriteSheetManager {
             ppu: config.ppu,
         };
 
-        Ok(self.resource_pool.add(sheet))
+        Ok(self.add(sheet))
     }
-
 }
 
 pub struct SpriteRenderer {
@@ -205,8 +189,8 @@ impl SpriteRenderSystem {
         }
     }
 
-    fn _flush_current_batch(&mut self, sprite_mgr: &SpriteSheetManager, batch: Batch) {
-        let sheet = sprite_mgr.resource_pool.get(&batch.sheet);
+    fn _flush_current_batch(&mut self, res_mgr: &ResManager, batch: Batch) {
+        let sheet = res_mgr.get(&batch.sheet);
 
         let instance_data = (&batch.sprites).iter()
             .map(|x| {
@@ -292,7 +276,7 @@ struct Batch {
 }
 
 impl<'a> System<'a> for SpriteRenderSystem {
-    type SystemData = (ReadExpect<'a, SpriteSheetManager>, ReadStorage<'a, SpriteRenderer>, ReadStorage<'a, Transform>);
+    type SystemData = (ReadExpect<'a, ResManager>, ReadStorage<'a, SpriteRenderer>, ReadStorage<'a, Transform>);
 
     fn run(&mut self, (sprite_mgr, sr_vec, trans_vec): Self::SystemData) {
         let mut cur_batch: Option<Batch> = None;
@@ -333,10 +317,4 @@ impl<'a> System<'a> for SpriteRenderSystem {
         }
     }
 
-    // https://specs.amethyst.rs/docs/tutorials/07_setup.html#custom-setup-functionality
-    fn setup(&mut self, world: &mut World) {
-        use specs::SystemData;
-        Self::SystemData::setup(world);
-        world.insert(SpriteSheetManager::new());
-    }
 }

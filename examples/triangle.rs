@@ -5,7 +5,6 @@ use glium::{Display, VertexBuffer, DepthTest, Surface};
 use specs::System;
 use specs::{ReadExpect};
 use mu::ecs::Time;
-use mu::client::editor::EditorModule;
 use mu::asset::ResourceRef;
 use mu::asset;
 

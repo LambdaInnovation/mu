@@ -1,22 +1,23 @@
+extern crate glium;
 #[macro_use]
 pub extern crate log;
-
-extern crate specs;
-extern crate glium;
 extern crate serde;
 extern crate simplelog;
+extern crate specs;
 
-use simplelog::*;
-
-use specs::prelude::*;
 use std::rc::Rc;
 
 use glium::Display;
 use glutin;
 use glutin::event;
 use glutin::event_loop::ControlFlow;
+use simplelog::*;
+use specs::prelude::*;
+
+use crate::asset::ResManager;
 use crate::client::input::RawInputData;
 use crate::client::WindowInfo;
+use crate::ecs::Time;
 
 pub type WindowEventLoop = glutin::event_loop::EventLoop<()>;
 
@@ -308,8 +309,9 @@ impl RuntimeBuilder {
         dispatcher.setup(&mut world);
 
         // Default resources
-        world.insert(ecs::Time::default());
+        world.insert(Time::default());
         world.insert(RawInputData::new());
+        world.insert(ResManager::new());
 
         let mut window_info = WindowInfo::new();
         let screen_size = display.gl_window().window().inner_size();
@@ -421,7 +423,9 @@ impl Runtime {
                 .unwrap_or_default();
         }
 
+        // 帧末释放所有资源
         asset::cleanup_local_resources();
+        world.write_resource::<ResManager>().cleanup();
     }
 
 }

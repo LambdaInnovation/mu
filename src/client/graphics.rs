@@ -10,19 +10,17 @@ use serde_json;
 use specs::prelude::*;
 
 use crate::asset;
-use crate::asset::{load_asset, load_asset_local, LoadableAsset, ResourceRef, LocalResourcesManager};
+use crate::asset::{load_asset, load_asset_local, LoadableAsset, ResourceRef, LocalResManager};
 use crate::client::WindowInfo;
 use crate::ecs::Transform;
 use crate::glium;
-use crate::math::{Mat4, Vec3, Float};
+use crate::math::{Mat4, Vec3};
 use crate::math;
 use crate::Module;
 use crate::util::Color;
 use uuid::Uuid;
 use std::collections::HashMap;
-use glium::uniforms::{UniformsStorage, Uniforms, UniformValue};
-
-// pub type Texture = glium::texture::CompressedSrgbTexture2d;
+use glium::uniforms::{Uniforms, UniformValue};
 
 pub struct Texture {
     pub uuid: Uuid,
@@ -255,7 +253,7 @@ pub struct Material {
 
 impl Material {
 
-    pub fn as_uniforms<'a>(&self, res_mgr: &'a LocalResourcesManager) -> MaterialUniforms<'a> {
+    pub fn as_uniforms<'a>(&self, res_mgr: &'a LocalResManager) -> MaterialUniforms<'a> {
         let properties: HashMap<_, _> = self.uniforms.iter()
             .map(|(k, v)| {
                 let uniform_value = match v {
@@ -282,7 +280,7 @@ pub struct MaterialUniforms<'a> {
 
 impl Material {
 
-    fn new(program: ResourceRef<Program>) -> Self {
+    pub fn new(program: ResourceRef<Program>) -> Self {
         Self {
             program,
             uniforms: HashMap::new()

@@ -2,15 +2,16 @@ use std::fs;
 use std::io;
 use std::path::Path as Path;
 use std::collections::HashMap;
-use std::cell::{RefCell, RefMut};
-use std::any::{TypeId, Any, type_name};
-use std::borrow::{Borrow};
+use std::cell::{RefCell};
+use std::any::{TypeId, Any};
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::ops::{SubAssign, AddAssign};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static mut BASE_ASSET_PATH: &str = "./assets/";
+
+pub type LocalResManager = ResourceManager<dyn ResPool>;
+pub type ResManager = ResourceManager<dyn ThreadedResPool>;
 
 pub trait LoadableAsset
 where Self : Sized {
@@ -28,7 +29,6 @@ pub fn get_dir(path: &str) -> String {
 pub fn load_asset<T>(path: &str) -> io::Result<T>
 where T: LoadableAsset
 {
-    info!("load_asset: {:?}", &path);
     return T::read(path);
 }
 
@@ -37,7 +37,6 @@ pub fn load_asset_local<T>(base_dir: &str, path: &str) -> io::Result<T>
 where T: LoadableAsset
 {
     let p = get_asset_path_local(base_dir, path);
-    info!("load_asset: {:?}", &p);
     return T::read(p.as_str());
 }
 
@@ -85,8 +84,7 @@ impl<T: 'static> PartialEq for ResourceRef<T> {
     }
 }
 
-impl<T: 'static> Eq for ResourceRef<T> {
-}
+impl<T: 'static> Eq for ResourceRef<T> {}
 
 // PhantomData 只当做一个类型标记，实际上能够跨线程同步
 unsafe impl<T: 'static> Send for ResourceRef<T> {}
@@ -94,22 +92,20 @@ unsafe impl<T: 'static> Sync for ResourceRef<T> {}
 
 impl<T: 'static> Drop for ResourceRef<T> {
     fn drop(&mut self) {
-        let remain = self.ref_cnt.fetch_sub(1, Ordering::SeqCst);
-        // info!("Sub resCount {:?} = {}", std::any::type_name::<T>(), remain);
+        self.ref_cnt.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
 impl<T: 'static> Clone for ResourceRef<T> {
     fn clone(&self) -> Self {
-        let mut ret = Self {
+        let ret = Self {
             idx: self.idx,
             type_id: self.type_id,
             marker: PhantomData,
             ref_cnt: self.ref_cnt.clone()
         };
 
-        let cnt = self.ref_cnt.fetch_add(1, Ordering::SeqCst);
-        // info!("Add resCount {:?} = {}", std::any::type_name::<T>(), cnt);
+        self.ref_cnt.fetch_add(1, Ordering::SeqCst);
 
         ret
     }
@@ -125,10 +121,23 @@ pub struct ResourcePool<T> where T: 'static {
     free_indices: Vec<usize>,
 }
 
-trait LocalResourcePool {
+impl<T: 'static + Send + Sync> ThreadedResPool for ResourcePool<T> {}
+
+pub trait ResPool {
     fn cleanup(&mut self);
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
+pub trait ThreadedResPool: ResPool + Send + Sync {}
+
+impl<T: 'static + LoadableAsset> ResourcePool<T> {
+
+    pub fn load_asset(&mut self, path: &str) -> io::Result<ResourceRef<T>> {
+        let asset = load_asset(path)?;
+        Ok(self.add(asset))
+    }
+
 }
 
 impl<T> ResourcePool<T> where T: 'static {
@@ -141,7 +150,7 @@ impl<T> ResourcePool<T> where T: 'static {
     }
 
     pub fn add(&mut self, res: T) -> ResourceRef<T> {
-        let ref_cnt = Arc::new(AtomicU32::new(1));
+        let ref_cnt = Arc::new(AtomicU32::new(0));
         let resource_entry = ResourceEntry {
             resource: res,
             ref_cnt: ref_cnt.clone()
@@ -172,7 +181,7 @@ impl<T> ResourcePool<T> where T: 'static {
     }
 }
 
-impl<T> LocalResourcePool for ResourcePool<T> where T: 'static {
+impl<T> ResPool for ResourcePool<T> where T: 'static {
     fn cleanup(&mut self) {
         for (ix, item) in (&mut self.entries).iter_mut().enumerate() {
             let need_remove = match item {
@@ -205,7 +214,7 @@ where T: 'static
 }
 
 pub fn with_local_resource_mgr<F, R>(f: F) -> R
-    where F: FnOnce(&mut LocalResourcesManager) -> R
+    where F: FnOnce(&mut ResourceManager<dyn ResPool>) -> R
 {
     ALL_RESOURCES.with(|ref_cell| {
         let mut mgr_ref = ref_cell.borrow_mut();
@@ -220,16 +229,11 @@ pub fn cleanup_local_resources() {
     })
 }
 
-pub struct LocalResourcesManager {
-    map: HashMap<TypeId, Box<dyn LocalResourcePool>>
+pub struct ResourceManager<R: ResPool + ?Sized> {
+    map: HashMap<TypeId, Box<R>>
 }
 
-impl LocalResourcesManager {
-    fn new() -> Self {
-        Self {
-            map: HashMap::new()
-        }
-    }
+impl ResourceManager<dyn ResPool> {
 
     pub fn add<T: 'static>(&mut self, res: T) -> ResourceRef<T> {
         let type_id = TypeId::of::<T>();
@@ -242,15 +246,45 @@ impl LocalResourcesManager {
         pool.add(res)
     }
 
+}
+
+impl ResourceManager<dyn ThreadedResPool> {
+
+    pub fn add<T: 'static + Send + Sync>(&mut self, res: T) -> ResourceRef<T> {
+        let type_id = TypeId::of::<T>();
+        if !self.map.contains_key(&type_id) {
+            let res_pool: ResourcePool<T> = ResourcePool::new();
+            self.map.insert(type_id, Box::new(res_pool));
+        }
+
+        let pool: &mut ResourcePool<T> = self.map.get_mut(&type_id).unwrap().as_any_mut().downcast_mut().unwrap();
+        pool.add(res)
+    }
+
+}
+
+impl<R: ResPool + ?Sized> ResourceManager<R> {
+    pub fn new() -> Self {
+        Self {
+            map: HashMap::new()
+        }
+    }
+
+    pub fn get_pool<T: 'static>(&self) -> &ResourcePool<T> {
+        self.map.get(&TypeId::of::<T>()).unwrap().as_any().downcast_ref().unwrap()
+    }
+
+    pub fn get_pool_mut<T: 'static>(&mut self) -> &mut ResourcePool<T> {
+        self.map.get_mut(&TypeId::of::<T>()).unwrap().as_any_mut().downcast_mut().unwrap()
+    }
+
     pub fn get<T: 'static>(&self, res_ref: &ResourceRef<T>) -> &T {
-        let pool: &ResourcePool<T> = self.map
-            .get(&res_ref.type_id).unwrap().as_any().downcast_ref().unwrap();
+        let pool: &ResourcePool<T> = self.get_pool();
         pool.get(res_ref)
     }
 
     pub fn get_mut<T: 'static>(&mut self, res_ref: &ResourceRef<T>) -> &mut T {
-        let mut pool: &mut ResourcePool<T> = self.map
-            .get_mut(&res_ref.type_id).unwrap().as_any_mut().downcast_mut().unwrap();
+        let pool: &mut ResourcePool<T> = self.get_pool_mut();
         pool.get_mut(&res_ref)
     }
 
@@ -262,5 +296,5 @@ impl LocalResourcesManager {
 }
 
 thread_local! {
-static ALL_RESOURCES: RefCell<LocalResourcesManager> = RefCell::new(LocalResourcesManager::new());
+static ALL_RESOURCES: RefCell<ResourceManager<dyn ResPool>> = RefCell::new(ResourceManager::new());
 }

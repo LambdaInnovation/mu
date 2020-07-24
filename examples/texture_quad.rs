@@ -1,5 +1,4 @@
 use mu;
-use mu::log;
 use mu::{RuntimeBuilder, Module, InitData, InsertInfo, StartData};
 use mu::client::graphics::{GraphicsModule, DEP_RENDER_SETUP, DEP_RENDER_TEARDOWN, Camera, Texture};
 use mu::client::graphics;
