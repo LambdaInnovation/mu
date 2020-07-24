@@ -151,7 +151,6 @@ impl Module for QuadModule {
 }
 
 fn main() {
-    mu::common_init();
     mu::asset::set_base_asset_path("./examples/asset");
 
     let runtime = RuntimeBuilder::new("Textured Quad")

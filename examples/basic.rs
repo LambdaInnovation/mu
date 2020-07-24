@@ -55,8 +55,6 @@ impl mu::Module for ExampleModule {
 
 
 fn main() {
-    mu::common_init();
-    info!("My start");
     let runtime = mu::RuntimeBuilder::new("Mu Example: Basic")
         .add_game_module(ExampleModule)
         .build();

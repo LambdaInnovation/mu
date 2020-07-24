@@ -18,6 +18,7 @@ use crate::asset::ResManager;
 use crate::client::input::RawInputData;
 use crate::client::WindowInfo;
 use crate::ecs::Time;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub type WindowEventLoop = glutin::event_loop::EventLoop<()>;
 
@@ -324,6 +325,10 @@ pub struct RuntimeBuilder {
 impl RuntimeBuilder {
 
     pub fn new(name: &str) -> Self {
+        if !COMMON_INITIALIZED.load(Ordering::SeqCst) {
+            common_init();
+        }
+
         Self {
             name: String::from(name),
             modules: vec![]
@@ -492,15 +497,19 @@ impl Runtime {
 }
 
 /// Mu supports multi-instance. Use this to setup common functionalities shared between `Runtime`'s.
-/// TODO: Simplify this
+/// For single-instance games, first time creating `RuntimeBuilder` will call this.
 pub fn common_init() {
+    assert_eq!(COMMON_INITIALIZED.load(Ordering::SeqCst), false, "Can't common_init twice");
     CombinedLogger::init(
         vec![
             TermLogger::new(LevelFilter::Info, Config::default(), TerminalMode::Mixed),
             // WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
         ]
     ).unwrap();
+    COMMON_INITIALIZED.store(true, Ordering::SeqCst);
 }
+
+static COMMON_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(test)]
 mod tests {
