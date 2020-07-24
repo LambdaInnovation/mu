@@ -1,9 +1,13 @@
-pub use glium::uniforms;
-pub use cgmath::num_traits::*;
-pub use cgmath;
+/// ! General mathematics operation.
+
 use std::f32::consts;
-use std::ops::{Div, Mul, Sub};
+use std::ops::{Div, Mul, Sub, Add};
 use serde::{Serialize, Deserialize};
+
+pub use cgmath::num_traits::*;
+
+/// ! Many structs in cgmath crate is used by Mu::math, so we provide direct access here.
+pub use cgmath;
 
 pub type Float = f32;
 
@@ -11,16 +15,7 @@ pub type Vec3 = cgmath::Vector3<Float>;
 pub type Vec2 = cgmath::Vector2<Float>;
 pub type Mat4 = cgmath::Matrix4<Float>;
 
-#[derive(Serialize, Deserialize)]
-#[serde(remote = "Vec2")]
-pub struct Vec2SerdeRef {
-    x: Float,
-    y: Float
-}
-
 pub type Quaternion = cgmath::Quaternion<Float>;
-// #[allow(dead_code)]
-// pub type UnitQuaternion = nalgebra::UnitQuaternion<Float>;
 pub type Rotation3 = cgmath::Basis3<Float>;
 
 pub type Deg = cgmath::Deg<Float>;
@@ -31,10 +26,16 @@ pub const PI: f32 = consts::PI;
 pub const DEG_2_RAD: f32 = PI / 180.0;
 pub const RAD_2_DEG: f32 = 180.0 / PI;
 
-// TODO: Generalize to vec and other floats
-// TODO: Bounded version
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "Vec2")]
+pub struct Vec2SerdeRef {
+    x: Float,
+    y: Float
+}
+
 #[inline]
-pub fn lerp(a: Float, b: Float, t: Float) -> Float {
+pub fn lerp<T>(a: T, b: T, t: T) -> T
+where T: Add<Output=T> + Sub<Output=T> + Mul<Output=T> + Copy {
     a + (b - a) * t
 }
 
@@ -69,28 +70,34 @@ pub fn rad2deg(rad: Float) -> Float {
     RAD_2_DEG * rad
 }
 
-/// Calculates the modulo-friendly division for a/b, which is only well defined for b>0.
+/// Calculates floor(a / b) for a > 0 and b > 0.
 #[inline]
-pub fn div_low<T>(a: T, b: T) -> T
+pub fn div_floor<T>(a: T, b: T) -> T
 where
     T: Copy + One + Ord + Sub<Output = T> + Div<Output = T> + Mul<Output = T>,
 {
-    let myone = T::one();
+    let one = T::one();
     let res = a / b;
     if res * b > a {
-        res - myone
+        res - one
     } else {
         res
     }
 }
 
-pub fn ortho(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> Mat4 {
-    cgmath::ortho(left, right, bottom, top, near, far)
+/// Convenient matrix operations.
+pub mod mat {
+    use super::*;
+
+    pub fn ortho(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> Mat4 {
+        cgmath::ortho(left, right, bottom, top, near, far)
+    }
+
+    pub fn perspective(fov: Deg, aspect: Float, z_near: Float, z_far: Float) -> Mat4 {
+        cgmath::perspective(fov, aspect, z_near, z_far)
+    }
 }
 
-pub fn perspective(fov: Deg, aspect: Float, z_near: Float, z_far: Float) -> Mat4 {
-    cgmath::perspective(fov, aspect, z_near, z_far)
-}
 
 pub mod rand {
     pub use rand::prelude::*;

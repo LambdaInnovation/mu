@@ -188,12 +188,12 @@ impl<'a> System<'a> for SysRenderPrepare {
 
                 let projection = match cam.projection {
                     CameraProjection::Perspective { fov, z_near, z_far } => {
-                        crate::math::perspective(crate::math::deg(fov), aspect, z_near, z_far)
+                        math::mat::perspective(crate::math::deg(fov), aspect, z_near, z_far)
                     }
                     CameraProjection::Orthographic { size, z_near, z_far } => {
                         let half_size = size / 2.;
 
-                        crate::math::ortho(-aspect * half_size, aspect * half_size,
+                        math::mat::ortho(-aspect * half_size, aspect * half_size,
                             -half_size, half_size,
                             z_near, z_far)
                     }
