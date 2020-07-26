@@ -53,6 +53,11 @@ pub fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
 }
 
 #[inline]
+pub fn vec2(x: Float, y: Float) -> Vec2 {
+    Vec2::new(x, y)
+}
+
+#[inline]
 pub fn vec3(x: Float, y: Float, z: Float) -> Vec3 {
     Vec3::new(x, y, z)
 }

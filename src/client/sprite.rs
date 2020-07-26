@@ -15,6 +15,7 @@ use specs::Join;
 use std::io;
 use glium::index::PrimitiveType;
 use std::rc::Rc;
+use crate::util::Color;
 
 #[derive(Clone, Deserialize)]
 pub struct SpriteConfig {
@@ -59,8 +60,8 @@ pub struct SpriteSheet {
 }
 
 impl SpriteSheet {
-    pub fn find_sprite(&self, name: &str) -> Option<&Sprite> {
-        self.sprites.iter().find(|x| &x.config.name == name)
+    pub fn find_sprite(&self, name: &str) -> Option<(usize, &Sprite)> {
+        self.sprites.iter().enumerate().find(|(_, x)| &x.config.name == name)
     }
 }
 
@@ -74,9 +75,15 @@ pub struct SpriteRef {
 }
 
 impl SpriteRef {
-    pub fn new(sheet: ResourceRef<SpriteSheet>, idx: usize) -> Self {
+
+    pub fn from_name(res_mgr: &ResManager, sheet: &ResourceRef<SpriteSheet>, name: &str) -> Option<Self> {
+        res_mgr.get(&sheet).find_sprite(name)
+            .map(|(idx, _)| SpriteRef::new(&sheet, idx))
+    }
+
+    pub fn new(sheet: &ResourceRef<SpriteSheet>, idx: usize) -> Self {
         Self {
-            sheet,
+            sheet: sheet.clone(),
             idx
         }
     }
@@ -105,7 +112,20 @@ impl ResourcePool<SpriteSheet> {
 
 pub struct SpriteRenderer {
     pub sprite: SpriteRef,
-    pub material: Option<graphics::Material>
+    pub material: Option<graphics::Material>,
+    pub color: Color
+}
+
+impl SpriteRenderer {
+
+    pub fn new(spr: SpriteRef) -> Self {
+        Self {
+            sprite: spr,
+            material: None,
+            color: Color::white()
+        }
+    }
+
 }
 
 impl Component for SpriteRenderer {
@@ -147,10 +167,11 @@ glium::implement_vertex!(SpriteVertex, v_pos, v_uv);
 struct SpriteInstanceData {
     i_world_view: [[f32; 4]; 4],
     i_uv_min: [f32; 2],
-    i_uv_max: [f32; 2]
+    i_uv_max: [f32; 2],
+    i_color: [f32; 4]
 }
 
-glium::implement_vertex!(SpriteInstanceData, i_world_view, i_uv_min, i_uv_max);
+glium::implement_vertex!(SpriteInstanceData, i_world_view, i_uv_min, i_uv_max, i_color);
 
 struct SpriteRenderSystem {
     vbo: VertexBuffer<SpriteVertex>,
@@ -201,19 +222,26 @@ impl SpriteRenderSystem {
                     let tex_width = texture.raw_texture.width() as f32;
                     let tex_height = texture.raw_texture.height() as f32;
 
+                    let sprite_scl: Vec2 = sprite_ref.config.size / (sheet.ppu as f32);
+                    let sprite_offset: Vec2 = -(sprite_ref.config.pivot - math::vec2(0.5, 0.5));
+                    let world_view = x.world_view *
+                        Mat4::from_nonuniform_scale(sprite_scl.x, sprite_scl.y, 1.0) *
+                        Mat4::from_translation(sprite_offset.extend(0.0));
+
                     let tuv1: Vec2 = sprite_ref.config.pos - sprite_ref.config.size * 0.5;
                     let tuv2: Vec2 = sprite_ref.config.pos + sprite_ref.config.size * 0.5;
 
                     let u1 = tuv1.x / tex_width;
-                    let v1 = tuv1.y / tex_height;
+                    let v1 = tuv2.y / tex_height;
                     let u2 = tuv2.x / tex_width;
-                    let v2 = tuv2.y / tex_height;
+                    let v2 = tuv1.y / tex_height;
 
                     // sprite_ref.config.
                     SpriteInstanceData {
-                        i_world_view: x.world_view.into(),
+                        i_world_view: world_view.into(),
                         i_uv_min: [u1, v1],
-                        i_uv_max: [u2, v2]
+                        i_uv_max: [u2, v2],
+                        i_color: x.color.into(),
                     }
                 })
             })
@@ -266,7 +294,8 @@ impl SpriteRenderSystem {
 
 struct SpriteInstance {
     world_view: Mat4,
-    idx: usize
+    idx: usize,
+    color: Color
 }
 
 struct Batch {
@@ -284,7 +313,8 @@ impl<'a> System<'a> for SpriteRenderSystem {
             let world_view: Mat4 = math::Mat4::from_translation(trans.pos) * Mat4::from(trans.rot);
             let sprite_instance = SpriteInstance {
                 idx: sr.sprite.idx,
-                world_view
+                world_view,
+                color: sr.color.clone()
             };
             // Batching
             let cur_taken = cur_batch.take();

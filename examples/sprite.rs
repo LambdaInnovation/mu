@@ -10,20 +10,57 @@ struct MyModule;
 
 impl Module for MyModule {
     fn start(&self, start_data: &mut StartData) {
-        let sheet_ref = start_data.world.write_resource::<ResManager>()
-            .get_pool_mut::<SpriteSheet>()
-            .load(&start_data.display, "texture/test_grid.sheet.json").unwrap();
-        let sprite_ref = SpriteRef::new(sheet_ref, 0);
+        let (spr_main, spr_lu, spr_ld, spr_ru, spr_rd) = {
+            let mut res_mgr = start_data.world.write_resource::<ResManager>();
+            let sheet_ref = res_mgr
+                .get_pool_mut::<SpriteSheet>()
+                .load(&start_data.display, "texture/test_grid.sheet.json").unwrap();
 
+            let sprite_ref = SpriteRef::new(&sheet_ref, 0);
+            let sprite_ref_lu = SpriteRef::from_name(&res_mgr, &sheet_ref, "LU").unwrap();
+            let sprite_ref_ld = SpriteRef::from_name(&res_mgr, &sheet_ref, "LD").unwrap();
+            let sprite_ref_ru = SpriteRef::from_name(&res_mgr, &sheet_ref, "RU").unwrap();
+            let sprite_ref_rd = SpriteRef::from_name(&res_mgr, &sheet_ref, "RD").unwrap();
+
+            (sprite_ref, sprite_ref_lu, sprite_ref_ld, sprite_ref_ru, sprite_ref_rd)
+        };
+
+        const OFFSET: f32 = 0.5;
         start_data.world.create_entity()
-            .with(Transform::new().pos(math::vec3(0., 1., 0.)))
-            .with(SpriteRenderer { sprite: sprite_ref.clone(), material: None })
+            .with(Transform::new().pos(math::vec3(-OFFSET, OFFSET, 0.)))
+            .with(SpriteRenderer::new(spr_lu.clone()))
             .build();
 
         start_data.world.create_entity()
-            .with(Transform::new().pos(math::vec3(0.5, -0.3, 0.)))
-            .with(SpriteRenderer { sprite: sprite_ref.clone(), material: None })
+            .with(Transform::new().pos(math::vec3(-OFFSET, -OFFSET, 0.)))
+            .with(SpriteRenderer::new(spr_ld.clone()))
             .build();
+
+        start_data.world.create_entity()
+            .with(Transform::new().pos(math::vec3(OFFSET, -OFFSET, 0.)))
+            .with(SpriteRenderer::new(spr_rd.clone()))
+            .build();
+
+        start_data.world.create_entity()
+            .with(Transform::new().pos(math::vec3(OFFSET, OFFSET, 0.)))
+            .with(SpriteRenderer::new(spr_ru.clone()))
+            .build();
+
+        start_data.world.create_entity()
+            .with(Transform::new().pos(math::vec3(1.5, 0., 0.)))
+            .with(SpriteRenderer::new(spr_main.clone()))
+            .build();
+
+        {
+            let mut sr = SpriteRenderer::new(spr_main.clone());
+            sr.color.g = 0.1;
+            sr.color.b = 0.1;
+
+            start_data.world.create_entity()
+                .with(Transform::new().pos(math::vec3(-1.5, 0., 0.)))
+                .with(sr)
+                .build();
+        }
 
         start_data.world.create_entity()
             .with(Transform::new())
