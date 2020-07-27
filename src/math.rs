@@ -92,6 +92,14 @@ where
     }
 }
 
+#[derive(Copy, Clone, Default)]
+pub(crate) struct Rect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
 /// Convenient matrix operations.
 pub mod mat {
     use super::*;

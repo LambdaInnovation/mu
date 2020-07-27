@@ -2,6 +2,7 @@
 use specs::prelude::*;
 use crate::math::*;
 use std::time::Instant;
+use specs_hierarchy::Parent;
 
 const MAX_DELTA_TIME: f32 = 0.1;
 
@@ -62,4 +63,17 @@ impl Transform {
 
 impl Component for Transform {
     type Storage = specs::VecStorage<Self>;
+}
+
+/// Generic parent component used for `specs-hierarchy`.
+/// for detailed usage see [specs-hierarchy site](https://github.com/rustgd/specs-hierarchy)
+#[derive(Debug, Copy, Clone, Eq, Ord, PartialOrd, PartialEq)]
+pub struct HasParent {
+    pub parent: Entity
+}
+
+impl Parent for HasParent {
+    fn parent_entity(&self) -> Entity {
+        self.parent
+    }
 }
