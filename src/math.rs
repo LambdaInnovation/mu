@@ -13,6 +13,8 @@ pub type Float = f32;
 
 pub type Vec3 = cgmath::Vector3<Float>;
 pub type Vec2 = cgmath::Vector2<Float>;
+
+pub type Mat3 = cgmath::Matrix3<Float>;
 pub type Mat4 = cgmath::Matrix4<Float>;
 
 pub type Quaternion = cgmath::Quaternion<Float>;
@@ -98,6 +100,39 @@ pub(crate) struct Rect {
     pub y: f32,
     pub width: f32,
     pub height: f32,
+}
+
+impl Rect {
+
+    pub fn new_origin(width: f32, height: f32) -> Self {
+        Self { x: 0., y: 0., width, height }
+    }
+
+    pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
+        Self { x, y, width, height }
+    }
+
+}
+
+pub mod mat3 {
+    use super::*;
+
+    pub fn translate(p: Vec2) -> Mat3 {
+        #[cfg_attr(rustfmt, rustfmt_skip)]
+        Mat3::new(
+            1., 0., 0.,
+            0., 1., 0.,
+            p.x, p.y, 1.,
+        )
+    }
+
+    pub fn rotate_around(p: Vec2, angle: Deg) -> Mat3 {
+        unimplemented!();
+    }
+
+    pub fn scale_around(p: Vec2, scl: Vec2) -> Mat3 {
+        unimplemented!();
+    }
 }
 
 /// Convenient matrix operations.
