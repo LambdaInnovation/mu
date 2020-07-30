@@ -54,6 +54,13 @@ pub fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
     }
 }
 
+// Currently same as unity, maybe can be better?
+#[inline]
+pub fn approx_eq(lhs: f32, rhs: f32) -> bool {
+    let delta = abs(rhs - lhs);
+    delta < f32::max(f32::EPSILON * 8., 1e-6 * f32::max(abs(lhs), abs(rhs)))
+}
+
 #[inline]
 pub fn vec2(x: Float, y: Float) -> Vec2 {
     Vec2::new(x, y)
@@ -110,6 +117,13 @@ impl Rect {
 
     pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
         Self { x, y, width, height }
+    }
+
+    pub fn approx_eq(lhs: &Rect, rhs: &Rect) -> bool {
+        approx_eq(lhs.x, rhs.x) &&
+            approx_eq(lhs.y, rhs.y) &&
+            approx_eq(lhs.width, rhs.width) &&
+            approx_eq(lhs.height, rhs.height)
     }
 
 }

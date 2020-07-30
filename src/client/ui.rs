@@ -225,26 +225,6 @@ impl<'a> System<'a> for UILayoutSystem {
         let mut all_canvas: Vec<(Entity, &Canvas)> = (&*entities, &canvas_vec).join().collect();
         all_canvas.sort_by_key(|x| x.1.order);
 
-        let update_widget_layout = |frame: WidgetFrame, entity: Entity, dirty: bool| {
-            let frame = {
-                let widget = widget_vec.get_mut(entity).unwrap();
-                if dirty || widget.runtime_info.dirty {
-                    let (x, width) = _calc_layout(frame.rect.width,
-                                                        widget.layout_x);
-                    let (y, height) = _calc_layout(frame.rect.height,
-                                                         widget.layout_y);
-
-                    widget.runtime_info.local_rect = Rect::new(x, y, width, height);
-                    // widget.runtime_info.wvp = frame.wvp * Mat3::tran
-                }
-
-                WidgetFrame {
-                    wvp: widget.runtime_info.wvp,
-                    rect: widget.runtime_info.local_rect
-                }
-            };
-        };
-
         for (ent, canvas) in all_canvas {
             let size = canvas.actual_size(&*window_info);
 
@@ -270,10 +250,11 @@ impl<'a> System<'a> for UILayoutSystem {
 #[cfg(test)]
 mod test {
     use specs::{World, WorldExt, DispatcherBuilder, Builder};
-    use crate::client::ui::{UILayoutSystem, Canvas, RefResolution, Widget, LayoutType};
+    use crate::client::ui::{UILayoutSystem, Canvas, RefResolution, Widget, LayoutType, AlignType};
     use crate::client::WindowInfo;
     use specs_hierarchy::HierarchySystem;
     use crate::ecs::HasParent;
+    use crate::math::Rect;
 
     #[test]
     fn layout_simple() {
@@ -304,6 +285,13 @@ mod test {
                 .with_layout_y(LayoutType::expand(0., 0.)))
             .build();
 
+        let w1 = world.create_entity()
+            .with(HasParent::new(w0))
+            .with(Widget::new()
+                .with_layout_x(LayoutType::normal(AlignType::Middle, 50., 100.))
+                .with_layout_y(LayoutType::normal(AlignType::Middle, -50., 100.)))
+            .build();
+
         let mut window_info = WindowInfo::new();
         window_info.pixel_size = (1280, 720);
         world.insert(window_info);
@@ -312,11 +300,19 @@ mod test {
         world.maintain();
 
         {
-            match world.read_storage::<Widget>().get(w0.clone()) {
+            let widget_storage = world.read_storage::<Widget>();
+            match widget_storage.get(w0) {
                 Some(w) => {
-                    println!("{:?}", w.runtime_info.local_rect);
+                    assert!(Rect::approx_eq(&w.runtime_info.local_rect,
+                                            &Rect::new_origin(1920., 1080.)));
                 }
                 _ => panic!()
+            }
+
+            if let Some(w) = widget_storage.get(w1) {
+                println!("{:?}", w.runtime_info.local_rect);
+            } else {
+                panic!();
             }
         }
 
