@@ -72,6 +72,18 @@ pub struct HasParent {
     pub parent: Entity
 }
 
+impl HasParent {
+
+    pub fn new(parent: Entity) -> Self {
+        Self { parent }
+    }
+
+}
+
+impl Component for HasParent {
+    type Storage = FlaggedStorage<Self, DenseVecStorage<Self>>;
+}
+
 impl Parent for HasParent {
     fn parent_entity(&self) -> Entity {
         self.parent

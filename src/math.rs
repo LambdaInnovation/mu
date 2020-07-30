@@ -94,7 +94,7 @@ where
     }
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Debug)]
 pub(crate) struct Rect {
     pub x: f32,
     pub y: f32,

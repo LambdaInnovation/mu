@@ -3,6 +3,7 @@ use crate::math::*;
 use specs_hierarchy::Hierarchy;
 use crate::ecs::HasParent;
 use std::cmp::Ordering;
+use core::fmt::Alignment::Center;
 
 // UI axis: x+ right; y+ up
 
@@ -44,6 +45,18 @@ pub enum LayoutType {
     Normal{ align: AlignType, pos: f32, len: f32 }
 }
 
+impl LayoutType {
+
+    pub fn expand(n: f32, p: f32) -> Self {
+        LayoutType::Expand { off_n: n, off_p: p }
+    }
+
+    pub fn normal(align: AlignType, pos: f32, len: f32) -> Self {
+        LayoutType::Normal { align, pos, len }
+    }
+
+}
+
 // #[derive(Default)]
 struct WidgetRuntimeInfo {
     /// Whether widget rect needs to be recalculated.
@@ -52,6 +65,18 @@ struct WidgetRuntimeInfo {
     local_rect: Rect,
     /// Matrix to transform vertex from local space to screen space.
     wvp: Mat3,
+}
+
+impl WidgetRuntimeInfo {
+
+    pub fn new() -> Self {
+        Self {
+            dirty: true,
+            local_rect: Rect::new_origin(0., 0.),
+            wvp: Mat3::one()
+        }
+    }
+
 }
 
 pub struct Widget {
@@ -64,6 +89,40 @@ pub struct Widget {
 
 impl Component for Widget {
     type Storage = VecStorage<Self>;
+}
+
+impl Widget {
+
+    pub fn new() -> Self {
+        Widget {
+            scl: vec2(1., 1.),
+            pivot: vec2(0.5, 0.5),
+            layout_x: LayoutType::Normal { align: AlignType::Middle, pos: 0.0, len: 100. },
+            layout_y: LayoutType::Normal { align: AlignType::Middle, pos: 0.0, len: 100. },
+            runtime_info: WidgetRuntimeInfo::new()
+        }
+    }
+
+    fn _mark_dirty(&mut self) {
+        self.runtime_info.dirty = true;
+    }
+
+    pub fn with_layout_x(mut self, layout: LayoutType) -> Self {
+        self.layout_x = layout;
+        self._mark_dirty();
+        self
+    }
+
+    pub fn with_layout_y(mut self, layout: LayoutType) -> Self {
+        self.layout_y = layout;
+        self._mark_dirty();
+        self
+    }
+
+    // pub fn runtime_info(&self) -> &WidgetRuntimeInfo {
+    //     &self.runtime_info
+    // }
+
 }
 
 /// 触发Widget更新的时机:
@@ -140,4 +199,62 @@ impl<'a> System<'a> for UILayoutSystem {
             }
         }
     }
+}
+
+#[cfg(test)]
+mod test {
+    use specs::{World, WorldExt, DispatcherBuilder, Builder};
+    use crate::client::ui::{UILayoutSystem, Canvas, RefResolution, Widget, LayoutType};
+    use crate::client::WindowInfo;
+    use specs_hierarchy::HierarchySystem;
+    use crate::ecs::HasParent;
+
+    #[test]
+    fn layout_simple() {
+        let mut world = World::new();
+
+        let mut dispatcher = DispatcherBuilder::new()
+            .with(HierarchySystem::<HasParent>::new(&mut world), "", &[])
+            .with(UILayoutSystem {}, "", &[])
+            .build();
+
+        dispatcher.setup(&mut world);
+
+        let canvas_ent = world.create_entity()
+            .with(Canvas {
+                order: 0,
+                ref_resolution: RefResolution {
+                    width: 1920,
+                    height: 1080,
+                    scale_dimension: 0.5
+                }
+            })
+            .build();
+
+        let w0 = world.create_entity()
+            .with(HasParent::new(canvas_ent))
+            .with(Widget::new()
+                .with_layout_x(LayoutType::expand(0., 0.))
+                .with_layout_y(LayoutType::expand(0., 0.)))
+            .build();
+
+        let mut window_info = WindowInfo::new();
+        window_info.pixel_size = (1280, 720);
+        world.insert(window_info);
+
+        dispatcher.dispatch(&world);
+        world.maintain();
+
+        {
+            match world.read_storage::<Widget>().get(w0.clone()) {
+                Some(w) => {
+                    println!("{:?}", w.runtime_info.local_rect);
+                }
+                _ => panic!()
+            }
+        }
+
+        println!("UI layout OK!");
+    }
+
 }
