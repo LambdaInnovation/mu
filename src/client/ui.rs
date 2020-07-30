@@ -4,6 +4,7 @@ use specs_hierarchy::Hierarchy;
 use crate::ecs::HasParent;
 use std::cmp::Ordering;
 use core::fmt::Alignment::Center;
+use crate::client::WindowInfo;
 
 // UI axis: x+ right; y+ up
 
@@ -20,6 +21,21 @@ pub struct Canvas {
 
 impl Component for Canvas {
     type Storage = VecStorage<Self>;
+}
+
+impl Canvas {
+
+    /// Actual size depending on the screen.
+    fn actual_size(&self, info: &WindowInfo) -> (f32, f32) {
+        let (scr_w, scr_h) = info.pixel_size;
+        let (scr_w, scr_h) = (scr_w as f32, scr_h as f32);
+        let scl_w = (self.ref_resolution.width as f32) / scr_w;
+        let scl_h = (self.ref_resolution.height as f32) / scr_h;
+
+        let scl = lerp(scl_w, scl_h, self.ref_resolution.scale_dimension);
+        return (scr_w * scl, scr_h * scl)
+    }
+
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -139,27 +155,61 @@ pub struct UILayoutSystem {
 
 }
 
-impl UILayoutSystem {
-
-    fn _calc_layout(parent_length: f32, layout: LayoutType) -> (f32, f32) {
-        match layout {
-            LayoutType::Normal { align, pos, len } => {
-                let pivot_pos = align.ratio() * parent_length;
-                (pivot_pos + pos, len)
-            },
-            LayoutType::Expand { off_n, off_p } => {
-                let parent_end = parent_length;
-                let self_start = off_n;
-                let self_end = parent_end - off_p;
-                (self_start, self_end - self_start)
-            },
-        }
-    }
-}
-
 struct WidgetFrame {
     wvp: Mat3,
     rect: Rect
+}
+
+struct WidgetRecurseContext<'a, 'b> {
+    entities: &'a Entities<'b>,
+    hierarchy: &'a Hierarchy<HasParent>,
+    widget_vec: &'a mut WriteStorage<'b, Widget>
+}
+
+fn _calc_layout(parent_length: f32, layout: LayoutType) -> (f32, f32) {
+    match layout {
+        LayoutType::Normal { align, pos, len } => {
+            let pivot_pos = align.ratio() * parent_length;
+            (pivot_pos + pos, len)
+        },
+        LayoutType::Expand { off_n, off_p } => {
+            let parent_end = parent_length;
+            let self_start = off_n;
+            let self_end = parent_end - off_p;
+            (self_start, self_end - self_start)
+        },
+    }
+}
+
+fn _update_widget_layout(
+    ctx: &mut WidgetRecurseContext,
+    frame: &WidgetFrame, entity: Entity, dirty: bool) {
+
+    let (self_frame, self_dirty) = {
+        let widget = ctx.widget_vec.get_mut(entity).unwrap();
+
+        let d = if dirty || widget.runtime_info.dirty {
+            let (x, width) = _calc_layout(frame.rect.width,
+                                                widget.layout_x);
+            let (y, height) = _calc_layout(frame.rect.height,
+                                                 widget.layout_y);
+
+            widget.runtime_info.local_rect = Rect::new(x, y, width, height);
+            // widget.runtime_info.wvp = frame.wvp * Mat3::tran
+            true
+        } else {
+            false
+        };
+
+        (WidgetFrame {
+            wvp: widget.runtime_info.wvp,
+            rect: widget.runtime_info.local_rect
+        }, d)
+    };
+
+    for child in ctx.hierarchy.children(entity).iter().map(|x| x.clone()) {
+        _update_widget_layout(ctx, &self_frame, child, dirty || self_dirty);
+    }
 }
 
 impl<'a> System<'a> for UILayoutSystem {
@@ -168,9 +218,10 @@ impl<'a> System<'a> for UILayoutSystem {
         Entities<'a>,
         ReadExpect<'a, Hierarchy<HasParent>>,
         ReadStorage<'a, Canvas>,
-        WriteStorage<'a, Widget>);
+        WriteStorage<'a, Widget>,
+        ReadExpect<'a, WindowInfo>);
 
-    fn run(&mut self, (entities, hierarchy, canvas_vec, mut widget_vec): Self::SystemData) {
+    fn run(&mut self, (entities, hierarchy, canvas_vec, mut widget_vec, window_info): Self::SystemData) {
         let mut all_canvas: Vec<(Entity, &Canvas)> = (&*entities, &canvas_vec).join().collect();
         all_canvas.sort_by_key(|x| x.1.order);
 
@@ -178,8 +229,10 @@ impl<'a> System<'a> for UILayoutSystem {
             let frame = {
                 let widget = widget_vec.get_mut(entity).unwrap();
                 if dirty || widget.runtime_info.dirty {
-                    let (x, width) = Self::_calc_layout(frame.rect.width, widget.layout_x);
-                    let (y, height) = Self::_calc_layout(frame.rect.height, widget.layout_y);
+                    let (x, width) = _calc_layout(frame.rect.width,
+                                                        widget.layout_x);
+                    let (y, height) = _calc_layout(frame.rect.height,
+                                                         widget.layout_y);
 
                     widget.runtime_info.local_rect = Rect::new(x, y, width, height);
                     // widget.runtime_info.wvp = frame.wvp * Mat3::tran
@@ -193,9 +246,22 @@ impl<'a> System<'a> for UILayoutSystem {
         };
 
         for (ent, canvas) in all_canvas {
+            let size = canvas.actual_size(&*window_info);
+
+            let frame = WidgetFrame {
+                wvp: mat3::translate(Vec2::new(0., 0.)), // TODO
+                rect: Rect::new(0., 0., size.0, size.1)
+            };
+
+            let mut rec_ctx = WidgetRecurseContext {
+                entities: &entities,
+                hierarchy: &*hierarchy,
+                widget_vec: &mut widget_vec
+            };
+
             for child in hierarchy.children(ent) {
-                if let Some(widget) = widget_vec.get_mut(*child) {
-                }
+                // FIXME: canvas的dirty 取决于window是否resize
+                _update_widget_layout(&mut rec_ctx, &frame, *child, false);
             }
         }
     }
