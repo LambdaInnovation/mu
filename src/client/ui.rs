@@ -5,6 +5,9 @@ use crate::ecs::HasParent;
 use std::cmp::Ordering;
 use core::fmt::Alignment::Center;
 use crate::client::WindowInfo;
+use crate::client::sprite::SpriteRef;
+use crate::util::Color;
+use crate::{Module, InitData, InsertInfo};
 
 // UI axis: x+ right; y+ up
 
@@ -98,6 +101,7 @@ impl WidgetRuntimeInfo {
 pub struct Widget {
     scl: Vec2,
     pivot: Vec2,
+    rot: f32,
     layout_x: LayoutType,
     layout_y: LayoutType,
     runtime_info: WidgetRuntimeInfo
@@ -113,6 +117,7 @@ impl Widget {
         Widget {
             scl: vec2(1., 1.),
             pivot: vec2(0.5, 0.5),
+            rot: 0.,
             layout_x: LayoutType::Normal { align: AlignType::Middle, pos: 0.0, len: 100. },
             layout_y: LayoutType::Normal { align: AlignType::Middle, pos: 0.0, len: 100. },
             runtime_info: WidgetRuntimeInfo::new()
@@ -166,11 +171,11 @@ struct WidgetRecurseContext<'a, 'b> {
     widget_vec: &'a mut WriteStorage<'b, Widget>
 }
 
-fn _calc_layout(parent_length: f32, layout: LayoutType) -> (f32, f32) {
+fn _calc_layout(parent_length: f32, layout: LayoutType, pivot: f32) -> (f32, f32) {
     match layout {
         LayoutType::Normal { align, pos, len } => {
             let pivot_pos = align.ratio() * parent_length;
-            (pivot_pos + pos, len)
+            (pivot_pos + pos - len * pivot, len)
         },
         LayoutType::Expand { off_n, off_p } => {
             let parent_end = parent_length;
@@ -179,6 +184,13 @@ fn _calc_layout(parent_length: f32, layout: LayoutType) -> (f32, f32) {
             (self_start, self_end - self_start)
         },
     }
+}
+
+fn calc_widget_mat(rect: &Rect, scl: Vec2, rot: f32) -> Mat3 {
+    let translation_mat = mat3::translate(-vec2(rect.x, rect.y));
+    // TODO: 支持scl和rot
+
+    translation_mat
 }
 
 fn _update_widget_layout(
@@ -190,12 +202,13 @@ fn _update_widget_layout(
 
         let d = if dirty || widget.runtime_info.dirty {
             let (x, width) = _calc_layout(frame.rect.width,
-                                                widget.layout_x);
+                                                widget.layout_x, widget.pivot.x);
             let (y, height) = _calc_layout(frame.rect.height,
-                                                 widget.layout_y);
+                                                 widget.layout_y, widget.pivot.y);
 
             widget.runtime_info.local_rect = Rect::new(x, y, width, height);
-            // widget.runtime_info.wvp = frame.wvp * Mat3::tran
+            widget.runtime_info.wvp = frame.wvp * calc_widget_mat(&widget.runtime_info.local_rect,
+                widget.scl, widget.rot);
             true
         } else {
             false
@@ -226,11 +239,11 @@ impl<'a> System<'a> for UILayoutSystem {
         all_canvas.sort_by_key(|x| x.1.order);
 
         for (ent, canvas) in all_canvas {
-            let size = canvas.actual_size(&*window_info);
+            let (width, height) = canvas.actual_size(&*window_info);
 
             let frame = WidgetFrame {
-                wvp: mat3::translate(Vec2::new(0., 0.)), // TODO
-                rect: Rect::new(0., 0., size.0, size.1)
+                wvp: mat3::ortho(0., width, 0., height), // Map (0,0)->(width,height) to NDC
+                rect: Rect::new(0., 0., width, height)
             };
 
             let mut rec_ctx = WidgetRecurseContext {
@@ -244,6 +257,57 @@ impl<'a> System<'a> for UILayoutSystem {
                 _update_widget_layout(&mut rec_ctx, &frame, *child, false);
             }
         }
+    }
+}
+
+/// An UI image. Size goes with Widget size.
+pub struct Image {
+    pub sprite: Option<SpriteRef>,
+    pub color: Color
+}
+
+// UI drawing: 需要每个canvas顺序绘制 所以实际的绘制顺序应该是
+// Canvas1-S1S2S3... Canvas2-S1S2S3...
+// 和系统的执行顺序存在交错
+// 这个先不处理了 等到wgpu-rs切换的时候更好处理
+
+struct UIImageRenderSystem {
+
+}
+
+impl UIImageRenderSystem {
+
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl<'a> System<'a> for UIImageRenderSystem {
+    type SystemData = (ReadStorage<'a, Canvas>, ReadExpect<'a, Hierarchy<HasParent>>, ReadStorage<'a, Widget>);
+
+    fn run(&mut self, data: Self::SystemData) {
+        use super::graphics;
+        graphics::with_render_data(|render_data| {
+            let mut frame = &mut render_data.frame;
+        });
+    }
+}
+
+pub struct UIModule;
+
+impl Module for UIModule {
+    fn init(&self, init_data: &mut InitData) {
+        use super::graphics;
+        // 这个其实不用insert到thread local，但是执行依赖关系不好处理
+        init_data.group_thread_local.dispatch(
+            InsertInfo::new("ui_layout").before(&[&graphics::DEP_RENDER_SETUP]),
+            |i| i.insert_thread_local(UILayoutSystem {})
+        );
+
+        init_data.group_thread_local.dispatch(
+            InsertInfo::new("ui_images").after(&[&graphics::DEP_RENDER_SETUP]).before(&[&graphics::DEP_RENDER_TEARDOWN]),
+            |i| i.insert_thread_local(UIImageRenderSystem::new())
+        );
     }
 }
 
@@ -301,16 +365,16 @@ mod test {
 
         {
             let widget_storage = world.read_storage::<Widget>();
-            match widget_storage.get(w0) {
-                Some(w) => {
-                    assert!(Rect::approx_eq(&w.runtime_info.local_rect,
-                                            &Rect::new_origin(1920., 1080.)));
-                }
-                _ => panic!()
+            if let Some(w) = widget_storage.get(w0) {
+                assert!(Rect::approx_eq(&w.runtime_info.local_rect,
+                                        &Rect::new_origin(1920., 1080.)));
+            } else {
+                panic!();
             }
 
             if let Some(w) = widget_storage.get(w1) {
-                println!("{:?}", w.runtime_info.local_rect);
+                assert!(Rect::approx_eq(&w.runtime_info.local_rect,
+                &Rect::new(960., 440., 100., 100.)))
             } else {
                 panic!();
             }

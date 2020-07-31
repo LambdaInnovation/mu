@@ -140,6 +140,27 @@ pub mod mat3 {
         )
     }
 
+    pub fn ortho(left: f32, right: f32, bottom: f32, top: f32) -> Mat3 {
+        let c0r0 = 2. / (right - left);
+        let c0r1 = 0.;
+        let c0r2 = 0.;
+
+        let c1r0 = 0.;
+        let c1r1 = 2. / (top - bottom);
+        let c1r2 = 0.;
+
+        let c2r0 = -(right + left) / (right - left);
+        let c2r1 = -(top + bottom) / (top - bottom);
+        let c2r2 = 1.;
+
+        #[cfg_attr(rustfmt, rustfmt_skip)]
+        Mat3::new(
+            c0r0, c0r1, c0r2,
+            c1r0, c1r1, c1r2,
+            c2r0, c2r1, c2r2
+        )
+    }
+
     pub fn rotate_around(p: Vec2, angle: Deg) -> Mat3 {
         unimplemented!();
     }
