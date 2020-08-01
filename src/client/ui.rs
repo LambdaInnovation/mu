@@ -8,6 +8,11 @@ use crate::client::WindowInfo;
 use crate::client::sprite::SpriteRef;
 use crate::util::Color;
 use crate::{Module, InitData, InsertInfo};
+use glium::{Frame, Program, Display, VertexBuffer, IndexBuffer};
+use crate::asset::ResourceRef;
+use std::rc::Rc;
+use glium::index::PrimitiveType;
+use crate::client::graphics::{Material, Texture};
 
 // UI axis: x+ right; y+ up
 
@@ -19,7 +24,8 @@ pub struct RefResolution {
 
 pub struct Canvas {
     order: i32,
-    ref_resolution: RefResolution
+    ref_resolution: RefResolution,
+    batcher: UIBatcher
 }
 
 impl Component for Canvas {
@@ -84,6 +90,8 @@ struct WidgetRuntimeInfo {
     local_rect: Rect,
     /// Matrix to transform vertex from local space to screen space.
     wvp: Mat3,
+    /// widget在canvas里的绘制顺序
+    draw_idx: u32,
 }
 
 impl WidgetRuntimeInfo {
@@ -92,7 +100,8 @@ impl WidgetRuntimeInfo {
         Self {
             dirty: true,
             local_rect: Rect::new_origin(0., 0.),
-            wvp: Mat3::one()
+            wvp: Mat3::one(),
+            draw_idx: 0
         }
     }
 
@@ -165,10 +174,24 @@ struct WidgetFrame {
     rect: Rect
 }
 
-struct WidgetRecurseContext<'a, 'b> {
+struct WidgetRecurseContextMut<'a, 'b> {
     entities: &'a Entities<'b>,
     hierarchy: &'a Hierarchy<HasParent>,
-    widget_vec: &'a mut WriteStorage<'b, Widget>
+    widget_vec: &'a mut WriteStorage<'b, Widget>,
+    cur_widget_draw_idx: u32
+}
+
+struct ImageBatchContext<'a, 'b> {
+    entities: &'a Entities<'b>,
+    hierarchy: &'a Hierarchy<HasParent>,
+    widget_vec: &'a ReadStorage<'b, Widget>,
+    image_read: &'a ReadStorage<'b, Image>,
+    batcher: &'a mut UIBatcher
+}
+
+impl<'a, 'b> ImageBatchContext<'a, 'b> {
+
+
 }
 
 fn _calc_layout(parent_length: f32, layout: LayoutType, pivot: f32) -> (f32, f32) {
@@ -194,11 +217,14 @@ fn calc_widget_mat(rect: &Rect, scl: Vec2, rot: f32) -> Mat3 {
 }
 
 fn _update_widget_layout(
-    ctx: &mut WidgetRecurseContext,
+    ctx: &mut WidgetRecurseContextMut,
     frame: &WidgetFrame, entity: Entity, dirty: bool) {
 
     let (self_frame, self_dirty) = {
         let widget = ctx.widget_vec.get_mut(entity).unwrap();
+
+        widget.runtime_info.draw_idx = ctx.cur_widget_draw_idx;
+        ctx.cur_widget_draw_idx += 1;
 
         let d = if dirty || widget.runtime_info.dirty {
             let (x, width) = _calc_layout(frame.rect.width,
@@ -246,10 +272,11 @@ impl<'a> System<'a> for UILayoutSystem {
                 rect: Rect::new(0., 0., width, height)
             };
 
-            let mut rec_ctx = WidgetRecurseContext {
+            let mut rec_ctx = WidgetRecurseContextMut {
                 entities: &entities,
                 hierarchy: &*hierarchy,
-                widget_vec: &mut widget_vec
+                widget_vec: &mut widget_vec,
+                cur_widget_draw_idx: 0
             };
 
             for child in hierarchy.children(ent) {
@@ -263,7 +290,12 @@ impl<'a> System<'a> for UILayoutSystem {
 /// An UI image. Size goes with Widget size.
 pub struct Image {
     pub sprite: Option<SpriteRef>,
+    pub material: Option<ResourceRef<Material>>,
     pub color: Color
+}
+
+impl Component for Image {
+    type Storage = VecStorage<Self>;
 }
 
 // UI drawing: 需要每个canvas顺序绘制 所以实际的绘制顺序应该是
@@ -271,29 +303,182 @@ pub struct Image {
 // 和系统的执行顺序存在交错
 // 这个先不处理了 等到wgpu-rs切换的时候更好处理
 
-struct UIImageRenderSystem {
-
+#[derive(Copy, Clone)]
+struct ImageVertex {
+    v_pos: [f32; 2],
+    v_uv: [f32; 2],
 }
 
-impl UIImageRenderSystem {
-
-    pub fn new() -> Self {
-        Self {}
+impl ImageVertex {
+    fn new(x: f32, y: f32, u: f32, v: f32) -> Self {
+        Self {
+            v_pos: [x, y],
+            v_uv: [u, v]
+        }
     }
 }
 
-impl<'a> System<'a> for UIImageRenderSystem {
-    type SystemData = (ReadStorage<'a, Canvas>, ReadExpect<'a, Hierarchy<HasParent>>, ReadStorage<'a, Widget>);
+glium::implement_vertex!(ImageVertex, v_pos, v_uv);
 
-    fn run(&mut self, data: Self::SystemData) {
-        use super::graphics;
-        graphics::with_render_data(|render_data| {
-            let mut frame = &mut render_data.frame;
-        });
+#[derive(Copy, Clone, Default)]
+struct ImageInstanceData {
+    i_world_view: [[f32; 4]; 4],
+    i_uv_min: [f32; 2],
+    i_uv_max: [f32; 2],
+    i_color: [f32; 4]
+}
+
+glium::implement_vertex!(ImageInstanceData, i_world_view, i_uv_min, i_uv_max, i_color);
+
+struct UIImageBatchSystem {
+}
+
+impl UIImageBatchSystem {
+
+    fn _walk<'a>(ctx: &mut ImageBatchContext, entity: Entity) {
+        if let Some(image) = ctx.image_read.get(entity) {
+            let widget = ctx.widget_vec.get(entity).unwrap();
+
+            ctx.batcher.batch(widget.runtime_info.draw_idx, DrawInstance::Image {
+                sprite: image.sprite.clone(),
+                material: image.material.clone(),
+                color: image.color
+            });
+        }
+
+        for child in ctx.hierarchy.children(entity) {
+            Self::_walk(ctx, child.clone());
+        }
     }
+}
+
+impl<'a> System<'a> for UIImageBatchSystem {
+    type SystemData = (
+        WriteStorage<'a, Canvas>,
+        Entities<'a>, ReadExpect<'a, Hierarchy<HasParent>>,
+        ReadStorage<'a, Widget>,
+        ReadStorage<'a, Image>);
+
+    fn run(&mut self, (mut canvas, entities, hierarchy, widget_storage, image_storage): Self::SystemData) {
+        for (ent, canvas) in (&entities, &mut canvas).join() {
+            let mut ctx = ImageBatchContext {
+                entities: &entities,
+                hierarchy: &hierarchy,
+                widget_vec: &widget_storage,
+                image_read: &image_storage,
+                batcher: &mut canvas.batcher
+            };
+
+            for child in ctx.hierarchy.children(ent) {
+                Self::_walk(&mut ctx, child.clone());
+            }
+        }
+    }
+
+}
+
+enum DrawInstance {
+    Image {
+        sprite: Option<SpriteRef>,
+        material: Option<ResourceRef<Material>>,
+        color: Color
+    },
+    Text {  }
+}
+
+struct UIBatcher {
+    ls: Vec<(u32, DrawInstance)>
+}
+
+impl UIBatcher {
+
+    fn new() -> Self {
+        Self { ls: vec![] }
+    }
+
+    fn batch(&mut self, id: u32, instance: DrawInstance) {}
+
+    fn finish(&mut self) -> Vec<DrawInstance> {
+        let mut result = Vec::<(u32, DrawInstance)>::new();
+        std::mem::swap(&mut result, &mut self.ls);
+
+        result.sort_by_key(|(id, _)| *id);
+        result.into_iter().map(|x| x.1).collect()
+    }
+
 }
 
 pub struct UIModule;
+
+struct UIImageRenderData {
+    default_program: ResourceRef<Program>,
+    vbo: VertexBuffer<ImageVertex>,
+    ibo: IndexBuffer<u16>,
+}
+
+impl UIImageRenderData {
+    
+    fn new(display: &Display) -> Self {
+        use crate::client::graphics;
+        let program = graphics::load_shader_by_content(display,
+                                                       include_str!("../../assets/ui_image_default.vert"),
+                                                       include_str!("../../assets/ui_image_default.frag"));
+
+        let vbo = VertexBuffer::new(display, &[
+            ImageVertex::new(0., 0., 0., 0.),
+            ImageVertex::new(0., 1., 0., 1.),
+            ImageVertex::new(1., 1., 1., 1.),
+            ImageVertex::new(1., 0., 1., 0.)
+        ]).unwrap();
+
+        let ibo = IndexBuffer::new(
+            display,
+            PrimitiveType::TrianglesList,
+            &[0u16, 1, 2, 0, 2, 3]).unwrap();
+        
+        Self {
+            default_program: program,
+            vbo, ibo
+        }
+    }
+}
+
+struct UIRenderSystem {
+    image_data: UIImageRenderData,
+    display: Rc<Display>
+}
+
+impl UIRenderSystem {
+
+    fn new(display: Rc<Display>) -> Self {
+        Self {
+            image_data: UIImageRenderData::new(&display),
+            display
+        }
+    }
+
+}
+
+impl<'a> System<'a> for UIRenderSystem {
+    type SystemData = WriteStorage<'a, Canvas>;
+
+    fn run(&mut self, mut data: Self::SystemData) {
+        use crate::client::graphics;
+        graphics::with_render_data(|f| {
+            for canvas in (&mut data).join() {
+                let draw_calls = canvas.batcher.finish();
+                for draw in draw_calls {
+                    match draw {
+                        DrawInstance::Image { sprite, material, color } => {
+                            
+                        },
+                        _ => unimplemented!()
+                    }
+                }
+            }
+        });
+    }
+}
 
 impl Module for UIModule {
     fn init(&self, init_data: &mut InitData) {
@@ -305,8 +490,16 @@ impl Module for UIModule {
         );
 
         init_data.group_thread_local.dispatch(
-            InsertInfo::new("ui_images").after(&[&graphics::DEP_RENDER_SETUP]).before(&[&graphics::DEP_RENDER_TEARDOWN]),
-            |i| i.insert_thread_local(UIImageRenderSystem::new())
+            InsertInfo::new("ui_images").after(&["ui_layout"]).before(&["ui_render"]),
+            |i| i.insert_thread_local(UIImageBatchSystem {})
+        );
+
+        let display_rc = init_data.display.clone();
+        init_data.group_thread_local.dispatch(
+            InsertInfo::new("ui_render")
+                .after(&[graphics::DEP_RENDER_SETUP]).before(&[graphics::DEP_RENDER_TEARDOWN])
+                .order(graphics::render_order::UI),
+            |i| i.insert_thread_local(UIRenderSystem::new(display_rc))
         );
     }
 }
@@ -314,7 +507,7 @@ impl Module for UIModule {
 #[cfg(test)]
 mod test {
     use specs::{World, WorldExt, DispatcherBuilder, Builder};
-    use crate::client::ui::{UILayoutSystem, Canvas, RefResolution, Widget, LayoutType, AlignType};
+    use crate::client::ui::{UILayoutSystem, Canvas, RefResolution, Widget, LayoutType, AlignType, UIBatcher};
     use crate::client::WindowInfo;
     use specs_hierarchy::HierarchySystem;
     use crate::ecs::HasParent;
@@ -338,7 +531,8 @@ mod test {
                     width: 1920,
                     height: 1080,
                     scale_dimension: 0.5
-                }
+                },
+                batcher: UIBatcher::new()
             })
             .build();
 

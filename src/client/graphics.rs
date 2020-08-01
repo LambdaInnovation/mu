@@ -32,6 +32,7 @@ pub const DEP_RENDER_TEARDOWN: &str = "render_teardown";
 
 pub mod render_order {
     pub const OPAQUE: i32 = 0;
+    pub const UI: i32 = 1000;
     pub const DEBUG_UI: i32 = 11000;
 }
 
