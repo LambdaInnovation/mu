@@ -51,6 +51,8 @@ impl LoadableAsset for SpriteSheetConfig {
 #[derive(Clone)]
 pub struct Sprite {
     pub config: SpriteConfig,
+    pub uv_min: Vec2,
+    pub uv_max: Vec2
 }
 
 pub struct SpriteSheet {
@@ -95,9 +97,27 @@ impl ResourcePool<SpriteSheet> {
         let config: SpriteSheetConfig = asset::load_asset(path)?;
         let texture = graphics::load_texture(display,
                                              &asset::get_asset_path_local(&config._path, &config.texture));
+        let (tex_width, tex_height) = {
+            asset::with_local_resource_mgr(|res_mgr| {
+                let t = res_mgr.get(&texture);
+                let tex_width = t.raw_texture.width() as f32;
+                let tex_height = t.raw_texture.height() as f32;
+                (tex_width, tex_height)
+            })
+        };
 
         let sprites: Vec<Sprite> = (&config.sprites).into_iter()
-            .map(|x| Sprite { config: x.clone() })
+            .map(|x| {
+                let tuv1: Vec2 = x.pos - x.size * 0.5;
+                let tuv2: Vec2 = x.pos + x.size * 0.5;
+
+                let u1 = tuv1.x / tex_width;
+                let v1 = tuv2.y / tex_height;
+                let u2 = tuv2.x / tex_width;
+                let v2 = tuv1.y / tex_height;
+
+                Sprite { config: x.clone(), uv_min: vec2(u1, v1), uv_max: vec2(u2, v2) }
+            })
             .collect();
 
         let sheet = SpriteSheet {
@@ -218,29 +238,17 @@ impl SpriteRenderSystem {
                 let sprite_ref = &sheet.sprites[x.idx];
 
                 asset::with_local_resource_mgr(|res_mgr| {
-                    let texture = res_mgr.get(&sheet.texture);
-                    let tex_width = texture.raw_texture.width() as f32;
-                    let tex_height = texture.raw_texture.height() as f32;
-
                     let sprite_scl: Vec2 = sprite_ref.config.size / (sheet.ppu as f32);
                     let sprite_offset: Vec2 = -(sprite_ref.config.pivot - math::vec2(0.5, 0.5));
                     let world_view = x.world_view *
                         Mat4::from_nonuniform_scale(sprite_scl.x, sprite_scl.y, 1.0) *
                         Mat4::from_translation(sprite_offset.extend(0.0));
 
-                    let tuv1: Vec2 = sprite_ref.config.pos - sprite_ref.config.size * 0.5;
-                    let tuv2: Vec2 = sprite_ref.config.pos + sprite_ref.config.size * 0.5;
-
-                    let u1 = tuv1.x / tex_width;
-                    let v1 = tuv2.y / tex_height;
-                    let u2 = tuv2.x / tex_width;
-                    let v2 = tuv1.y / tex_height;
-
                     // sprite_ref.config.
                     SpriteInstanceData {
                         i_world_view: world_view.into(),
-                        i_uv_min: [u1, v1],
-                        i_uv_max: [u2, v2],
+                        i_uv_min: [sprite_ref.uv_min.x, sprite_ref.uv_min.y],
+                        i_uv_max: [sprite_ref.uv_max.x, sprite_ref.uv_max.y],
                         i_color: x.color.into(),
                     }
                 })

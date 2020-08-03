@@ -22,13 +22,16 @@ use uuid::Uuid;
 use std::collections::HashMap;
 use glium::uniforms::{Uniforms, UniformValue};
 
+pub const DEP_RENDER_SETUP: &str = "render_setup";
+pub const DEP_RENDER_TEARDOWN: &str = "render_teardown";
+
+pub type UniformMat4 = [[f32; 4]; 4];
+pub type UniformMat3 = [[f32; 3]; 3];
+
 pub struct Texture {
     pub uuid: Uuid,
     pub raw_texture: glium::texture::CompressedSrgbTexture2d
 }
-
-pub const DEP_RENDER_SETUP: &str = "render_setup";
-pub const DEP_RENDER_TEARDOWN: &str = "render_teardown";
 
 pub mod render_order {
     pub const OPAQUE: i32 = 0;
@@ -127,7 +130,11 @@ pub fn load_texture(display: &Display, path: &str) -> ResourceRef<Texture> {
     let img = image::load_from_memory_with_format(&img_bytes,
                                                   image::ImageFormat::Png).unwrap();
     let img_dims = img.dimensions();
-    let img = RawImage2d::from_raw_rgba(img.into_rgba().into_vec(), img_dims);
+    create_texture(display, img.into_rgba().into_vec(), img_dims)
+}
+
+pub fn create_texture(display: &Display, rgba_bytes: Vec<u8>, dims: (u32, u32)) -> ResourceRef<Texture> {
+    let img = RawImage2d::from_raw_rgba(rgba_bytes, dims);
     let raw_texture = glium::texture::CompressedSrgbTexture2d::new(display, img).unwrap();
 
     let ret = Texture {

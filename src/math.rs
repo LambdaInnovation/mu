@@ -11,6 +11,7 @@ pub use cgmath;
 
 pub type Float = f32;
 
+pub type Vec4 = cgmath::Vector4<Float>;
 pub type Vec3 = cgmath::Vector3<Float>;
 pub type Vec2 = cgmath::Vector2<Float>;
 
@@ -126,10 +127,29 @@ impl Rect {
             approx_eq(lhs.height, rhs.height)
     }
 
+    pub fn size(&self) -> Vec2 {
+        vec2(self.width, self.height)
+    }
+
 }
 
 pub mod mat3 {
     use super::*;
+
+    #[inline]
+    pub fn extend_to_mat4(m: &Mat3) -> Mat4 {
+        #[inline]
+        fn ext_col(v: &Vec3) -> Vec4 {
+            Vec4::new(v.x, v.y, 0., v.z)
+        }
+
+        Mat4 {
+            x: ext_col(&m.x),
+            y: ext_col(&m.y),
+            z: Vec4::new(0., 0., 1., 0.),
+            w: ext_col(&m.z)
+        }
+    }
 
     pub fn translate(p: Vec2) -> Mat3 {
         #[cfg_attr(rustfmt, rustfmt_skip)]
@@ -167,6 +187,25 @@ pub mod mat3 {
 
     pub fn scale_around(p: Vec2, scl: Vec2) -> Mat3 {
         unimplemented!();
+    }
+
+    pub fn scale(scl: Vec2) -> Mat3 {
+        let c0r0 = scl.x;
+        let c1r0 = 0.;
+        let c2r0 = 0.;
+        let c0r1 = 0.;
+        let c1r1 = scl.y;
+        let c2r1 = 0.;
+        let c0r2 = 0.;
+        let c1r2 = 0.;
+        let c2r2 = 1.;
+
+        #[cfg_attr(rustfmt, rustfmt_skip)]
+            Mat3::new(
+            c0r0, c0r1, c0r2,
+            c1r0, c1r1, c1r2,
+            c2r0, c2r1, c2r2
+        )
     }
 }
 

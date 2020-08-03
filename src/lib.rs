@@ -17,8 +17,9 @@ use specs::prelude::*;
 use crate::asset::ResManager;
 use crate::client::input::RawInputData;
 use crate::client::WindowInfo;
-use crate::ecs::Time;
+use crate::ecs::{Time, HasParent};
 use std::sync::atomic::{AtomicBool, Ordering};
+use specs_hierarchy::HierarchySystem;
 
 pub type WindowEventLoop = glutin::event_loop::EventLoop<()>;
 
@@ -364,13 +365,18 @@ impl RuntimeBuilder {
         // ======= INIT =======
         let mut dispatcher_builder = specs::DispatcherBuilder::new();
         let mut init_data = crate::InitData::new(display.clone());
+        let mut world = World::new();
+
+        // Default systems
+        dispatcher_builder.add(HierarchySystem::<HasParent>::new(&mut world), "", &[]);
+
+        // Module init
         for game_module in &mut self.modules {
             game_module.init(&mut init_data);
         }
         init_data.post_dispatch(&mut dispatcher_builder);
 
         let mut dispatcher = dispatcher_builder.build();
-        let mut world = World::new();
         dispatcher.setup(&mut world);
 
         // Default resources

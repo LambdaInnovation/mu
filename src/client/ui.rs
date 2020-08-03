@@ -8,11 +8,12 @@ use crate::client::WindowInfo;
 use crate::client::sprite::SpriteRef;
 use crate::util::Color;
 use crate::{Module, InitData, InsertInfo};
-use glium::{Frame, Program, Display, VertexBuffer, IndexBuffer};
+use glium;
+use glium::{Frame, Program, Display, VertexBuffer, IndexBuffer, Surface};
 use crate::asset::ResourceRef;
 use std::rc::Rc;
 use glium::index::PrimitiveType;
-use crate::client::graphics::{Material, Texture};
+use crate::client::graphics::{Material, Texture, UniformMat4};
 
 // UI axis: x+ right; y+ up
 
@@ -20,6 +21,12 @@ pub struct RefResolution {
     pub width: u32,
     pub height: u32,
     pub scale_dimension: f32,
+}
+
+impl RefResolution {
+    pub fn new(width: u32, height: u32, scale_dimension: f32) -> Self {
+        RefResolution { width, height, scale_dimension }
+    }
 }
 
 pub struct Canvas {
@@ -34,6 +41,10 @@ impl Component for Canvas {
 
 impl Canvas {
 
+    pub fn new(order: i32, ref_resolution: RefResolution) -> Self {
+        Canvas { order, ref_resolution, batcher: UIBatcher::new() }
+    }
+
     /// Actual size depending on the screen.
     fn actual_size(&self, info: &WindowInfo) -> (f32, f32) {
         let (scr_w, scr_h) = info.pixel_size;
@@ -44,21 +55,20 @@ impl Canvas {
         let scl = lerp(scl_w, scl_h, self.ref_resolution.scale_dimension);
         return (scr_w * scl, scr_h * scl)
     }
-
 }
 
 #[derive(Copy, Clone, Debug)]
 pub enum AlignType {
-    Left, Middle, Right
+    Min, Middle, Max
 }
 
 impl AlignType {
 
     fn ratio(&self) -> f32 {
         match &self {
-            AlignType::Left => 0.0,
+            AlignType::Min => 0.0,
             AlignType::Middle => 0.5,
-            AlignType::Right => 1.0
+            AlignType::Max => 1.0
         }
     }
 
@@ -149,6 +159,12 @@ impl Widget {
         self
     }
 
+    pub fn with_pivot(mut self, p: Vec2) -> Self {
+        self.pivot = p;
+
+        self
+    }
+
     // pub fn runtime_info(&self) -> &WidgetRuntimeInfo {
     //     &self.runtime_info
     // }
@@ -210,9 +226,8 @@ fn _calc_layout(parent_length: f32, layout: LayoutType, pivot: f32) -> (f32, f32
 }
 
 fn calc_widget_mat(rect: &Rect, scl: Vec2, rot: f32) -> Mat3 {
-    let translation_mat = mat3::translate(-vec2(rect.x, rect.y));
+    let translation_mat = mat3::translate(vec2(rect.x, rect.y));
     // TODO: 支持scl和rot
-
     translation_mat
 }
 
@@ -294,6 +309,12 @@ pub struct Image {
     pub color: Color
 }
 
+impl Image {
+    pub fn new() -> Self {
+        Image { sprite: None, material: None, color: Color::white() }
+    }
+}
+
 impl Component for Image {
     type Storage = VecStorage<Self>;
 }
@@ -322,13 +343,13 @@ glium::implement_vertex!(ImageVertex, v_pos, v_uv);
 
 #[derive(Copy, Clone, Default)]
 struct ImageInstanceData {
-    i_world_view: [[f32; 4]; 4],
+    i_wvp: [[f32; 4]; 4],
     i_uv_min: [f32; 2],
     i_uv_max: [f32; 2],
     i_color: [f32; 4]
 }
 
-glium::implement_vertex!(ImageInstanceData, i_world_view, i_uv_min, i_uv_max, i_color);
+glium::implement_vertex!(ImageInstanceData, i_wvp, i_uv_min, i_uv_max, i_color);
 
 struct UIImageBatchSystem {
 }
@@ -338,11 +359,15 @@ impl UIImageBatchSystem {
     fn _walk<'a>(ctx: &mut ImageBatchContext, entity: Entity) {
         if let Some(image) = ctx.image_read.get(entity) {
             let widget = ctx.widget_vec.get(entity).unwrap();
+            // 这里再乘一个 size 把 [0,1] 的顶点坐标缩放
+            let wvp = widget.runtime_info.wvp * mat3::scale(widget.runtime_info.local_rect.size());
+            let final_wvp = mat3::extend_to_mat4(&wvp);
 
             ctx.batcher.batch(widget.runtime_info.draw_idx, DrawInstance::Image {
                 sprite: image.sprite.clone(),
                 material: image.material.clone(),
-                color: image.color
+                color: image.color,
+                wvp: final_wvp
             });
         }
 
@@ -379,6 +404,7 @@ impl<'a> System<'a> for UIImageBatchSystem {
 
 enum DrawInstance {
     Image {
+        wvp: Mat4,
         sprite: Option<SpriteRef>,
         material: Option<ResourceRef<Material>>,
         color: Color
@@ -396,7 +422,9 @@ impl UIBatcher {
         Self { ls: vec![] }
     }
 
-    fn batch(&mut self, id: u32, instance: DrawInstance) {}
+    fn batch(&mut self, id: u32, instance: DrawInstance) {
+        self.ls.push((id, instance));
+    }
 
     fn finish(&mut self) -> Vec<DrawInstance> {
         let mut result = Vec::<(u32, DrawInstance)>::new();
@@ -414,6 +442,7 @@ struct UIImageRenderData {
     default_program: ResourceRef<Program>,
     vbo: VertexBuffer<ImageVertex>,
     ibo: IndexBuffer<u16>,
+    white_texture: ResourceRef<Texture>
 }
 
 impl UIImageRenderData {
@@ -436,9 +465,12 @@ impl UIImageRenderData {
             PrimitiveType::TrianglesList,
             &[0u16, 1, 2, 0, 2, 3]).unwrap();
         
+        let white_texture = graphics::create_texture(display, vec![255, 255, 255, 255], (1, 1));
+        
         Self {
             default_program: program,
-            vbo, ibo
+            vbo, ibo,
+            white_texture
         }
     }
 }
@@ -464,18 +496,53 @@ impl<'a> System<'a> for UIRenderSystem {
 
     fn run(&mut self, mut data: Self::SystemData) {
         use crate::client::graphics;
+        use crate::asset;
+
         graphics::with_render_data(|f| {
-            for canvas in (&mut data).join() {
-                let draw_calls = canvas.batcher.finish();
-                for draw in draw_calls {
-                    match draw {
-                        DrawInstance::Image { sprite, material, color } => {
-                            
-                        },
-                        _ => unimplemented!()
+            asset::with_local_resource_mgr(|res_mgr| {
+                let image_data = &self.image_data;
+                let img_default_program = res_mgr.get(&image_data.default_program);
+                let img_white_texture = res_mgr.get(&self.image_data.white_texture);
+                for canvas in (&mut data).join() {
+                    let draw_calls = canvas.batcher.finish();
+                    for draw in draw_calls {
+                        match draw {
+                            DrawInstance::Image {
+                                wvp, sprite, material, color
+                            } => {
+                                let program = img_default_program;
+                                let (texture, uv0, uv1) = match &sprite {
+                                    Some(sr) => {
+                                        let sheet = res_mgr.get(&sr.sheet);
+                                        let texture = res_mgr.get(&sheet.texture);
+                                        let spr_data = &sheet.sprites[sr.idx];
+                                        (texture, spr_data.uv_min, spr_data.uv_max)
+                                    }
+                                    None => {
+                                        (img_white_texture, vec2(0., 0.), vec2(1., 1.))
+                                    }
+                                };
+                                let uniform_block = glium::uniform! {
+                                    u_texture: &texture.raw_texture
+                                };
+
+                                let instance_buf = VertexBuffer::new(&*self.display, &[ImageInstanceData {
+                                    i_wvp: wvp.into(),
+                                    i_uv_min: [uv0.x, uv0.y],
+                                    i_uv_max: [uv1.x, uv1.y],
+                                    i_color: color.into()
+                                }]).unwrap();
+
+                                f.frame.draw((&image_data.vbo, instance_buf.per_instance().unwrap()),
+                                             &image_data.ibo,
+                                             program, &uniform_block,
+                                             &Default::default()).unwrap();
+                            },
+                            _ => unimplemented!()
+                        }
                     }
                 }
-            }
+            });
         });
     }
 }
