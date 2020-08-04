@@ -78,6 +78,9 @@ impl RawInputData {
                     // }
                 }
             },
+            event::WindowEvent::CursorMoved { position, .. } => {
+                self.cursor_position = vec2(position.x as f32, position.y as f32);
+            }
             _ => ()
         }
     }

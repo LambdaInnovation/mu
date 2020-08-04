@@ -14,6 +14,7 @@ use crate::asset::ResourceRef;
 use std::rc::Rc;
 use glium::index::PrimitiveType;
 use crate::client::graphics::{Material, Texture, UniformMat4};
+use crate::client::input::RawInputData;
 
 // UI axis: x+ right; y+ up
 
@@ -118,12 +119,13 @@ impl WidgetRuntimeInfo {
 }
 
 pub struct Widget {
-    scl: Vec2,
-    pivot: Vec2,
-    rot: f32,
-    layout_x: LayoutType,
-    layout_y: LayoutType,
-    runtime_info: WidgetRuntimeInfo
+    pub scl: Vec2,
+    pub pivot: Vec2,
+    pub rot: f32,
+    pub layout_x: LayoutType,
+    pub layout_y: LayoutType,
+    pub raycast: bool,
+    runtime_info: WidgetRuntimeInfo,
 }
 
 impl Component for Widget {
@@ -139,7 +141,8 @@ impl Widget {
             rot: 0.,
             layout_x: LayoutType::Normal { align: AlignType::Middle, pos: 0.0, len: 100. },
             layout_y: LayoutType::Normal { align: AlignType::Middle, pos: 0.0, len: 100. },
-            runtime_info: WidgetRuntimeInfo::new()
+            runtime_info: WidgetRuntimeInfo::new(),
+            raycast: false
         }
     }
 
@@ -181,7 +184,7 @@ impl Widget {
 
 
 /// UI layout update -> UI control update
-pub struct UILayoutSystem {
+pub struct UIUpdateSystem {
 
 }
 
@@ -266,16 +269,17 @@ fn _update_widget_layout(
     }
 }
 
-impl<'a> System<'a> for UILayoutSystem {
+impl<'a> System<'a> for UIUpdateSystem {
 
     type SystemData = (
         Entities<'a>,
         ReadExpect<'a, Hierarchy<HasParent>>,
         ReadStorage<'a, Canvas>,
         WriteStorage<'a, Widget>,
-        ReadExpect<'a, WindowInfo>);
+        ReadExpect<'a, WindowInfo>,
+        ReadExpect<'a, RawInputData>);
 
-    fn run(&mut self, (entities, hierarchy, canvas_vec, mut widget_vec, window_info): Self::SystemData) {
+    fn run(&mut self, (entities, hierarchy, canvas_vec, mut widget_vec, window_info, input): Self::SystemData) {
         let mut all_canvas: Vec<(Entity, &Canvas)> = (&*entities, &canvas_vec).join().collect();
         all_canvas.sort_by_key(|x| x.1.order);
 
@@ -299,6 +303,8 @@ impl<'a> System<'a> for UILayoutSystem {
                 _update_widget_layout(&mut rec_ctx, &frame, *child, false);
             }
         }
+
+        // info!("cursor pos: {:?}", input.cursor_position);
     }
 }
 
@@ -553,7 +559,7 @@ impl Module for UIModule {
         // 这个其实不用insert到thread local，但是执行依赖关系不好处理
         init_data.group_thread_local.dispatch(
             InsertInfo::new("ui_layout").before(&[&graphics::DEP_RENDER_SETUP]),
-            |i| i.insert_thread_local(UILayoutSystem {})
+            |i| i.insert_thread_local(UIUpdateSystem {})
         );
 
         init_data.group_thread_local.dispatch(
@@ -574,7 +580,7 @@ impl Module for UIModule {
 #[cfg(test)]
 mod test {
     use specs::{World, WorldExt, DispatcherBuilder, Builder};
-    use crate::client::ui::{UILayoutSystem, Canvas, RefResolution, Widget, LayoutType, AlignType, UIBatcher};
+    use crate::client::ui::{UIUpdateSystem, Canvas, RefResolution, Widget, LayoutType, AlignType, UIBatcher};
     use crate::client::WindowInfo;
     use specs_hierarchy::HierarchySystem;
     use crate::ecs::HasParent;
@@ -586,7 +592,7 @@ mod test {
 
         let mut dispatcher = DispatcherBuilder::new()
             .with(HierarchySystem::<HasParent>::new(&mut world), "", &[])
-            .with(UILayoutSystem {}, "", &[])
+            .with(UIUpdateSystem {}, "", &[])
             .build();
 
         dispatcher.setup(&mut world);
