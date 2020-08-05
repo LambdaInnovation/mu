@@ -1,21 +1,21 @@
-use specs::{Component, VecStorage, System, ReadExpect, ReadStorage, WriteStorage, Entities, Join, Entity};
-use crate::math::*;
-use specs_hierarchy::Hierarchy;
-use crate::ecs::HasParent;
-use std::cmp::Ordering;
-use core::fmt::Alignment::Center;
-use crate::client::WindowInfo;
-use crate::client::sprite::SpriteRef;
-use crate::util::Color;
-use crate::{Module, InitData, InsertInfo};
-use glium;
-use glium::{Frame, Program, Display, VertexBuffer, IndexBuffer, Surface};
-use crate::asset::ResourceRef;
 use std::rc::Rc;
-use glium::index::PrimitiveType;
-use crate::client::graphics::{Material, Texture, UniformMat4};
-use crate::client::input::{RawInputData, ButtonState};
+
 use cgmath::SquareMatrix;
+use glium;
+use glium::{Display, IndexBuffer, Program, Surface, VertexBuffer};
+use glium::index::PrimitiveType;
+use specs::prelude::*;
+use specs_hierarchy::Hierarchy;
+
+use crate::{InitData, InsertInfo, Module};
+use crate::asset::ResourceRef;
+use crate::client::graphics::{Material, Texture};
+use crate::client::input::RawInputData;
+use crate::client::sprite::SpriteRef;
+use crate::client::WindowInfo;
+use crate::ecs::HasParent;
+use crate::math::*;
+use crate::util::Color;
 
 // UI axis: x+ right; y+ up
 
@@ -239,8 +239,9 @@ fn calc_widget_mat(offset: Vec2, scl: Vec2, rot: f32) -> Mat3 {
 }
 
 mod internal {
-    use super::*;
     use crate::client::input::ButtonState;
+
+    use super::*;
 
     pub struct UICursorData {
         pub cursor_ndc: Vec2,
@@ -673,12 +674,13 @@ impl Module for UIModule {
 
 #[cfg(test)]
 mod test {
-    use specs::{World, WorldExt, DispatcherBuilder, Builder};
-    use crate::client::ui::{Canvas, RefResolution, Widget, LayoutType, AlignType, UIBatcher, internal};
-    use crate::client::WindowInfo;
+    use specs::{Builder, DispatcherBuilder, World, WorldExt};
     use specs_hierarchy::HierarchySystem;
+
+    use crate::client::ui::{AlignType, Canvas, internal, LayoutType, RefResolution, UIBatcher, Widget};
+    use crate::client::WindowInfo;
     use crate::ecs::HasParent;
-    use crate::math::{Rect, vec2};
+    use crate::math::{vec2};
     use crate::math;
 
     #[test]

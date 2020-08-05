@@ -1,20 +1,20 @@
-use crate::{asset, Module, InitData, InsertInfo, math};
-use crate::math::*;
-use crate::asset::{LoadableAsset, ResourceRef, ResourcePool, ResManager};
-use crate::client::graphics::{Texture, Material};
-use crate::client::graphics;
-use crate::ecs::Transform;
+use std::io;
+use std::rc::Rc;
 
-use serde_json;
-use serde::Deserialize;
 use glium;
-use glium::{Display, VertexBuffer, IndexBuffer, Surface, Program};
-use specs::{Component, VecStorage, System, ReadStorage, ReadExpect};
+use glium::{Display, IndexBuffer, Program, Surface, VertexBuffer};
+use glium::index::PrimitiveType;
+use serde::Deserialize;
+use serde_json;
+use specs::{Component, ReadExpect, ReadStorage, System, VecStorage};
 use specs::Join;
 
-use std::io;
-use glium::index::PrimitiveType;
-use std::rc::Rc;
+use crate::{asset, InitData, InsertInfo, math, Module};
+use crate::asset::{LoadableAsset, ResManager, ResourcePool, ResourceRef};
+use crate::client::graphics::{Material, Texture};
+use crate::client::graphics;
+use crate::ecs::Transform;
+use crate::math::*;
 use crate::util::Color;
 
 #[derive(Clone, Deserialize)]

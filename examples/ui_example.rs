@@ -1,10 +1,11 @@
-use mu::{Module, InitData, StartData, RuntimeBuilder};
-use specs::{WorldExt, Builder};
-use mu::client::ui::{Canvas, RefResolution, Widget, LayoutType, AlignType, UIModule, Image};
-use mu::ecs::HasParent;
+use specs::{Builder, WorldExt};
+
+use mu::{InitData, Module, RuntimeBuilder, StartData};
 use mu::client::graphics::GraphicsModule;
-use mu::util::Color;
+use mu::client::ui::{AlignType, Canvas, Image, LayoutType, RefResolution, UIModule, Widget};
+use mu::ecs::HasParent;
 use mu::math::{Vec2, vec2};
+use mu::util::Color;
 
 struct MyModule;
 
