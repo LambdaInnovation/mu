@@ -68,6 +68,12 @@ pub fn vec2(x: Float, y: Float) -> Vec2 {
 }
 
 #[inline]
+pub fn vec2_approx_eq(v1: Vec2, v2: Vec2) -> bool {
+    approx_eq(v1.x, v2.x) &&
+        approx_eq(v1.y, v2.y)
+}
+
+#[inline]
 pub fn vec3(x: Float, y: Float, z: Float) -> Vec3 {
     Vec3::new(x, y, z)
 }
@@ -129,6 +135,11 @@ impl Rect {
 
     pub fn size(&self) -> Vec2 {
         vec2(self.width, self.height)
+    }
+
+    pub fn contains(&self, v: &Vec2) -> bool {
+        self.x <= v.x && v.x <= self.x + self.width &&
+            self.y <= v.y && v.y <= self.y + self.height
     }
 
 }

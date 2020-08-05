@@ -14,7 +14,8 @@ use crate::asset::ResourceRef;
 use std::rc::Rc;
 use glium::index::PrimitiveType;
 use crate::client::graphics::{Material, Texture, UniformMat4};
-use crate::client::input::RawInputData;
+use crate::client::input::{RawInputData, ButtonState};
+use cgmath::SquareMatrix;
 
 // UI axis: x+ right; y+ up
 
@@ -93,16 +94,26 @@ impl LayoutType {
 
 }
 
+#[derive(Copy, Clone, Debug)]
+enum WidgetCursorState {
+    Idle,
+    /// 鼠标在widget上按下 未松开 可能拖动到任意位置
+    Dragging
+}
+
 // #[derive(Default)]
 struct WidgetRuntimeInfo {
     /// Whether widget rect needs to be recalculated.
     dirty: bool,
-    /// Rect in local space.
-    local_rect: Rect,
-    /// Matrix to transform vertex from local space to screen space.
+    /// Size in local space.
+    size: Vec2,
+    /// Matrix to transform vertex from local space to NDC.
     wvp: Mat3,
+    /// Matrix to transform vertex from NDC to local space.
+    wvp_inverse: Mat3,
     /// widget在canvas里的绘制顺序
     draw_idx: u32,
+    cursor_states: [WidgetCursorState; 8]
 }
 
 impl WidgetRuntimeInfo {
@@ -110,9 +121,11 @@ impl WidgetRuntimeInfo {
     pub fn new() -> Self {
         Self {
             dirty: true,
-            local_rect: Rect::new_origin(0., 0.),
+            size: vec2(0., 0.),
             wvp: Mat3::one(),
-            draw_idx: 0
+            wvp_inverse: Mat3::one(),
+            draw_idx: 0,
+            cursor_states: [WidgetCursorState::Idle; 8]
         }
     }
 
@@ -168,6 +181,11 @@ impl Widget {
         self
     }
 
+    pub fn with_raycast(mut self) -> Self {
+        self.raycast = true;
+        self
+    }
+
     // pub fn runtime_info(&self) -> &WidgetRuntimeInfo {
     //     &self.runtime_info
     // }
@@ -182,22 +200,8 @@ impl Widget {
 ///
 /// 总体的机制是 widget.runtime_info.dirty = true, 然后 UISystem 自身来计算
 
-
-/// UI layout update -> UI control update
-pub struct UIUpdateSystem {
-
-}
-
-struct WidgetFrame {
-    wvp: Mat3,
-    rect: Rect
-}
-
-struct WidgetRecurseContextMut<'a, 'b> {
-    entities: &'a Entities<'b>,
-    hierarchy: &'a Hierarchy<HasParent>,
-    widget_vec: &'a mut WriteStorage<'b, Widget>,
-    cur_widget_draw_idx: u32
+enum UIEvent {
+    Clicked { entity: Entity, btn: u8 }
 }
 
 struct ImageBatchContext<'a, 'b> {
@@ -228,85 +232,175 @@ fn _calc_layout(parent_length: f32, layout: LayoutType, pivot: f32) -> (f32, f32
     }
 }
 
-fn calc_widget_mat(rect: &Rect, scl: Vec2, rot: f32) -> Mat3 {
-    let translation_mat = mat3::translate(vec2(rect.x, rect.y));
+fn calc_widget_mat(offset: Vec2, scl: Vec2, rot: f32) -> Mat3 {
+    let translation_mat = mat3::translate(offset);
     // TODO: 支持scl和rot
     translation_mat
 }
 
-fn _update_widget_layout(
-    ctx: &mut WidgetRecurseContextMut,
-    frame: &WidgetFrame, entity: Entity, dirty: bool) {
+mod internal {
+    use super::*;
+    use crate::client::input::ButtonState;
 
-    let (self_frame, self_dirty) = {
-        let widget = ctx.widget_vec.get_mut(entity).unwrap();
+    pub struct UICursorData {
+        pub cursor_ndc: Vec2,
+        pub btn_states: [ButtonState; 8],
+    }
 
-        widget.runtime_info.draw_idx = ctx.cur_widget_draw_idx;
-        ctx.cur_widget_draw_idx += 1;
+    pub struct WidgetRecurseContextMut<'a, 'b> {
+        entities: &'a Entities<'b>,
+        hierarchy: &'a Hierarchy<HasParent>,
+        widget_vec: &'a mut WriteStorage<'b, Widget>,
+        cur_widget_draw_idx: u32
+    }
 
-        let d = if dirty || widget.runtime_info.dirty {
-            let (x, width) = _calc_layout(frame.rect.width,
-                                                widget.layout_x, widget.pivot.x);
-            let (y, height) = _calc_layout(frame.rect.height,
-                                                 widget.layout_y, widget.pivot.y);
+    pub struct WidgetFrame {
+        wvp: Mat3,
+        size: Vec2
+    }
 
-            widget.runtime_info.local_rect = Rect::new(x, y, width, height);
-            widget.runtime_info.wvp = frame.wvp * calc_widget_mat(&widget.runtime_info.local_rect,
-                widget.scl, widget.rot);
-            true
-        } else {
-            false
+    pub fn _update_widget_layout(
+        ctx: &mut WidgetRecurseContextMut,
+        frame: &WidgetFrame, entity: Entity, dirty: bool) {
+
+        let (self_frame, self_dirty) = {
+            let widget = ctx.widget_vec.get_mut(entity).unwrap();
+
+            widget.runtime_info.draw_idx = ctx.cur_widget_draw_idx;
+            ctx.cur_widget_draw_idx += 1;
+
+            let d = if dirty || widget.runtime_info.dirty {
+                let (x, width) = _calc_layout(frame.size.x,
+                                              widget.layout_x, widget.pivot.x);
+                let (y, height) = _calc_layout(frame.size.y,
+                                               widget.layout_y, widget.pivot.y);
+
+            widget.runtime_info.size = vec2(width, height);
+                widget.runtime_info.wvp = frame.wvp * calc_widget_mat(vec2(x, y),
+                                                                      widget.scl, widget.rot);
+                widget.runtime_info.wvp_inverse = widget.runtime_info.wvp.invert().unwrap();
+                true
+            } else {
+                false
+            };
+
+            (WidgetFrame {
+                wvp: widget.runtime_info.wvp,
+                size: widget.runtime_info.size
+            }, d)
         };
 
-        (WidgetFrame {
-            wvp: widget.runtime_info.wvp,
-            rect: widget.runtime_info.local_rect
-        }, d)
-    };
-
-    for child in ctx.hierarchy.children(entity).iter().map(|x| x.clone()) {
-        _update_widget_layout(ctx, &self_frame, child, dirty || self_dirty);
+        for child in ctx.hierarchy.children(entity).iter().map(|x| x.clone()) {
+            _update_widget_layout(ctx, &self_frame, child, dirty || self_dirty);
+        }
     }
-}
 
-impl<'a> System<'a> for UIUpdateSystem {
+    pub fn _update_widget_input(ctx: &mut WidgetRecurseContextMut, entity: Entity, input: &UICursorData)
+                            -> u8 { // 返回值是子节点或自己是否已经处理hover/click
+        let mut button_flags: u8 = 0;
+        for child in ctx.hierarchy.children(entity) {
+            button_flags |= _update_widget_input(ctx, *child, &input);
+        }
 
-    type SystemData = (
-        Entities<'a>,
-        ReadExpect<'a, Hierarchy<HasParent>>,
-        ReadStorage<'a, Canvas>,
-        WriteStorage<'a, Widget>,
-        ReadExpect<'a, WindowInfo>,
-        ReadExpect<'a, RawInputData>);
+        let widget = ctx.widget_vec.get_mut(entity).unwrap();
+        let pos_local: Vec3 = widget.runtime_info.wvp_inverse * vec3(input.cursor_ndc.x, input.cursor_ndc.y, 1.);
+        let pos_local = vec2(pos_local.x, pos_local.y);
+        if widget.raycast {
+            // info!("update_widget_layout {:?} {:?} {:?}", entity, pos_local, widget.runtime_info.size);
+        }
+        let rect = Rect::new(0., 0., widget.runtime_info.size.x, widget.runtime_info.size.y);
+        if widget.raycast {
+            for btn_id in 0u8..8 {
+                if (button_flags & (1 << btn_id)) != 0 { // 其他人处理过了
+                    continue
+                }
 
-    fn run(&mut self, (entities, hierarchy, canvas_vec, mut widget_vec, window_info, input): Self::SystemData) {
-        let mut all_canvas: Vec<(Entity, &Canvas)> = (&*entities, &canvas_vec).join().collect();
-        all_canvas.sort_by_key(|x| x.1.order);
+                let btn_state = input.btn_states[btn_id as usize];
 
-        for (ent, canvas) in all_canvas {
-            let (width, height) = canvas.actual_size(&*window_info);
-
-            let frame = WidgetFrame {
-                wvp: mat3::ortho(0., width, 0., height), // Map (0,0)->(width,height) to NDC
-                rect: Rect::new(0., 0., width, height)
-            };
-
-            let mut rec_ctx = WidgetRecurseContextMut {
-                entities: &entities,
-                hierarchy: &*hierarchy,
-                widget_vec: &mut widget_vec,
-                cur_widget_draw_idx: 0
-            };
-
-            for child in hierarchy.children(ent) {
-                // FIXME: canvas的dirty 取决于window是否resize
-                _update_widget_layout(&mut rec_ctx, &frame, *child, false);
+                let cursor_state = &mut widget.runtime_info.cursor_states[btn_id as usize];
+                match cursor_state {
+                    WidgetCursorState::Dragging => {
+                        if btn_state.is_up() {
+                            info!("Widget up! {:?}", entity.id());
+                            *cursor_state = WidgetCursorState::Idle;
+                        } else {
+                            button_flags |= 1 << btn_id;
+                        }
+                    },
+                    _ => {
+                        if rect.contains(&pos_local) && btn_state == ButtonState::Down {
+                            info!("Widget down! {:?}", entity.id());
+                            *cursor_state = WidgetCursorState::Dragging;
+                            button_flags |= 1 << btn_id;
+                        }
+                    }
+                }
             }
         }
 
-        // info!("cursor pos: {:?}", input.cursor_position);
+        button_flags
+    }
+
+    /// UI layout update -> UI control update
+    pub struct UIUpdateSystem {
+
+    }
+
+    impl<'a> System<'a> for UIUpdateSystem {
+
+        type SystemData = (
+            Entities<'a>,
+            ReadExpect<'a, Hierarchy<HasParent>>,
+            ReadStorage<'a, Canvas>,
+            WriteStorage<'a, Widget>,
+            ReadExpect<'a, WindowInfo>,
+            ReadExpect<'a, RawInputData>);
+
+        fn run(&mut self, (entities, hierarchy, canvas_vec, mut widget_vec, window_info, input): Self::SystemData) {
+            let mut all_canvas: Vec<(Entity, &Canvas)> = (&*entities, &canvas_vec).join().collect();
+            all_canvas.sort_by_key(|x| x.1.order);
+
+            for (ent, canvas) in all_canvas {
+                let (width, height) = canvas.actual_size(&*window_info);
+
+                let frame = WidgetFrame {
+                    wvp: mat3::ortho(0., width, 0., height), // Map (0,0)->(width,height) to NDC
+                    size: vec2(width, height)
+                };
+
+                let mut rec_ctx = internal::WidgetRecurseContextMut {
+                    entities: &entities,
+                    hierarchy: &*hierarchy,
+                    widget_vec: &mut widget_vec,
+                    cur_widget_draw_idx: 0
+                };
+
+                let cursor_pos = input.cursor_position;
+                fn cvt_cursor(x: f32, sz: u32) -> f32 {
+                    2. * ((x / (sz as f32)) - 0.5)
+                }
+
+                // Y axis need to be inversed
+                let cursor_pos = vec2(cvt_cursor(cursor_pos.x, window_info.pixel_size.0),
+                                      cvt_cursor(window_info.pixel_size.1 as f32 - cursor_pos.y - 1., window_info.pixel_size.1));
+                let cursor_data = internal::UICursorData {
+                    cursor_ndc: cursor_pos,
+                    btn_states: input.get_mouse_buttons()
+                };
+
+                for child in hierarchy.children(ent) {
+                    // FIXME: canvas的dirty 取决于window是否resize
+                    internal::_update_widget_layout(&mut rec_ctx, &frame, *child, false);
+                    internal::_update_widget_input(&mut rec_ctx, *child, &cursor_data);
+                }
+            }
+
+            // info!("cursor pos: {:?}", input.cursor_position);
+        }
     }
 }
+
+
 
 /// An UI image. Size goes with Widget size.
 pub struct Image {
@@ -366,7 +460,7 @@ impl UIImageBatchSystem {
         if let Some(image) = ctx.image_read.get(entity) {
             let widget = ctx.widget_vec.get(entity).unwrap();
             // 这里再乘一个 size 把 [0,1] 的顶点坐标缩放
-            let wvp = widget.runtime_info.wvp * mat3::scale(widget.runtime_info.local_rect.size());
+            let wvp = widget.runtime_info.wvp * mat3::scale(widget.runtime_info.size);
             let final_wvp = mat3::extend_to_mat4(&wvp);
 
             ctx.batcher.batch(widget.runtime_info.draw_idx, DrawInstance::Image {
@@ -559,7 +653,7 @@ impl Module for UIModule {
         // 这个其实不用insert到thread local，但是执行依赖关系不好处理
         init_data.group_thread_local.dispatch(
             InsertInfo::new("ui_layout").before(&[&graphics::DEP_RENDER_SETUP]),
-            |i| i.insert_thread_local(UIUpdateSystem {})
+            |i| i.insert_thread_local(internal::UIUpdateSystem {})
         );
 
         init_data.group_thread_local.dispatch(
@@ -580,11 +674,12 @@ impl Module for UIModule {
 #[cfg(test)]
 mod test {
     use specs::{World, WorldExt, DispatcherBuilder, Builder};
-    use crate::client::ui::{UIUpdateSystem, Canvas, RefResolution, Widget, LayoutType, AlignType, UIBatcher};
+    use crate::client::ui::{Canvas, RefResolution, Widget, LayoutType, AlignType, UIBatcher, internal};
     use crate::client::WindowInfo;
     use specs_hierarchy::HierarchySystem;
     use crate::ecs::HasParent;
-    use crate::math::Rect;
+    use crate::math::{Rect, vec2};
+    use crate::math;
 
     #[test]
     fn layout_simple() {
@@ -592,7 +687,7 @@ mod test {
 
         let mut dispatcher = DispatcherBuilder::new()
             .with(HierarchySystem::<HasParent>::new(&mut world), "", &[])
-            .with(UIUpdateSystem {}, "", &[])
+            .with(internal::UIUpdateSystem {}, "", &[])
             .build();
 
         dispatcher.setup(&mut world);
@@ -633,15 +728,13 @@ mod test {
         {
             let widget_storage = world.read_storage::<Widget>();
             if let Some(w) = widget_storage.get(w0) {
-                assert!(Rect::approx_eq(&w.runtime_info.local_rect,
-                                        &Rect::new_origin(1920., 1080.)));
+                assert!(math::vec2_approx_eq(w.runtime_info.size, vec2(1920., 1080.)));
             } else {
                 panic!();
             }
 
             if let Some(w) = widget_storage.get(w1) {
-                assert!(Rect::approx_eq(&w.runtime_info.local_rect,
-                &Rect::new(960., 440., 100., 100.)))
+                assert!(math::vec2_approx_eq(w.runtime_info.size, vec2(100., 100.)))
             } else {
                 panic!();
             }

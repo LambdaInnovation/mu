@@ -110,6 +110,10 @@ impl RawInputData {
         self.mouse_button_state[Self::_mouse_btn_to_id(btn) as usize]
     }
 
+    pub fn get_mouse_buttons(&self) -> [ButtonState; 8] {
+        self.mouse_button_state.clone()
+    }
+
     fn _iter_button_state(v: &mut [ButtonState]) {
         for i in 0..v.len() {
             if v[i] == ButtonState::Down {

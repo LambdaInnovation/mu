@@ -47,6 +47,7 @@ impl Module for MyModule {
             .with(Widget::new()
                 .with_layout_x(LayoutType::normal(AlignType::Middle, 0., 300.))
                 .with_layout_y(LayoutType::normal(AlignType::Min, 100., 100.))
+                .with_raycast()
             )
             .with(image1)
             .build();
