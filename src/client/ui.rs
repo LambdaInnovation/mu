@@ -7,7 +7,7 @@ use glium::index::PrimitiveType;
 use specs::prelude::*;
 use specs_hierarchy::Hierarchy;
 
-use crate::{InitData, InsertInfo, Module};
+use crate::{InitData, InsertInfo, Module, StartData};
 use crate::asset::ResourceRef;
 use crate::client::graphics::{Material, Texture};
 use crate::client::input::RawInputData;
@@ -170,8 +170,20 @@ impl Widget {
 ///
 /// 总体的机制是 widget.runtime_info.dirty = true, 然后 UISystem 自身来计算
 
-enum UIEvent {
-    Clicked { entity: Entity, btn: u8 }
+pub enum WidgetEvent {
+    /// Fired in the frame widget is clicked
+    Clicked { entity: Entity, btn: u8 },
+
+    // Fired every frame widget is being dragged. delta: cursor position change in PARENT space.
+    // Drag { entity: Entity, btn: u8, delta: Vec2 },
+
+    /// Fired in the frame when widget's dragging is released.
+    Release { entity: Entity, btn: u8 },
+}
+
+/// A specs `Resources`. Contains all UI events in **PREVIOUS** frame.
+pub struct WidgetEvents {
+    pub events: Vec<WidgetEvent>
 }
 
 /// An UI image. Size goes with Widget size.
@@ -214,6 +226,10 @@ impl Module for UIModule {
                 .order(graphics::render_order::UI),
             |i| i.insert_thread_local(internal::UIRenderSystem::new(display_rc))
         );
+    }
+
+    fn start(&self, start_data: &mut StartData) {
+        start_data.world.insert(WidgetEvents { events: vec![] });
     }
 }
 
@@ -278,7 +294,7 @@ mod internal {
     }
 
     pub struct WidgetRecurseContextMut<'a, 'b> {
-        entities: &'a Entities<'b>,
+        widget_events: &'a mut WriteExpect<'b, WidgetEvents>,
         hierarchy: &'a Hierarchy<HasParent>,
         widget_vec: &'a mut WriteStorage<'b, Widget>,
         cur_widget_draw_idx: u32
@@ -351,7 +367,8 @@ mod internal {
                 match cursor_state {
                     WidgetCursorState::Dragging => {
                         if btn_state.is_up() {
-                            info!("Widget up! {:?}", entity.id());
+                            // info!("Widget up! {:?}", entity.id());
+                            ctx.widget_events.events.push(WidgetEvent::Release { entity, btn: btn_id });
                             *cursor_state = WidgetCursorState::Idle;
                         } else {
                             button_flags |= 1 << btn_id;
@@ -359,7 +376,8 @@ mod internal {
                     },
                     _ => {
                         if rect.contains(&pos_local) && btn_state == ButtonState::Down {
-                            info!("Widget down! {:?}", entity.id());
+                            // info!("Widget down! {:?}", entity.id());
+                            ctx.widget_events.events.push(WidgetEvent::Clicked { entity, btn: btn_id });
                             *cursor_state = WidgetCursorState::Dragging;
                             button_flags |= 1 << btn_id;
                         }
@@ -384,9 +402,12 @@ mod internal {
             ReadStorage<'a, Canvas>,
             WriteStorage<'a, Widget>,
             ReadExpect<'a, WindowInfo>,
-            ReadExpect<'a, RawInputData>);
+            ReadExpect<'a, RawInputData>,
+            WriteExpect<'a, WidgetEvents>);
 
-        fn run(&mut self, (entities, hierarchy, canvas_vec, mut widget_vec, window_info, input): Self::SystemData) {
+        fn run(&mut self, (entities, hierarchy, canvas_vec, mut widget_vec, window_info, input, mut widget_events): Self::SystemData) {
+            widget_events.events.clear();
+
             let mut all_canvas: Vec<(Entity, &Canvas)> = (&*entities, &canvas_vec).join().collect();
             all_canvas.sort_by_key(|x| x.1.order);
 
@@ -399,7 +420,7 @@ mod internal {
                 };
 
                 let mut rec_ctx = internal::WidgetRecurseContextMut {
-                    entities: &entities,
+                    widget_events: &mut widget_events,
                     hierarchy: &*hierarchy,
                     widget_vec: &mut widget_vec,
                     cur_widget_draw_idx: 0
