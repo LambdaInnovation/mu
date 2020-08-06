@@ -34,7 +34,7 @@ impl RefResolution {
 pub struct Canvas {
     order: i32,
     ref_resolution: RefResolution,
-    batcher: UIBatcher
+    batcher: internal::UIBatcher
 }
 
 impl Component for Canvas {
@@ -44,7 +44,7 @@ impl Component for Canvas {
 impl Canvas {
 
     pub fn new(order: i32, ref_resolution: RefResolution) -> Self {
-        Canvas { order, ref_resolution, batcher: UIBatcher::new() }
+        Canvas { order, ref_resolution, batcher: internal::UIBatcher::new() }
     }
 
     /// Actual size depending on the screen.
@@ -101,36 +101,6 @@ enum WidgetCursorState {
     Dragging
 }
 
-// #[derive(Default)]
-struct WidgetRuntimeInfo {
-    /// Whether widget rect needs to be recalculated.
-    dirty: bool,
-    /// Size in local space.
-    size: Vec2,
-    /// Matrix to transform vertex from local space to NDC.
-    wvp: Mat3,
-    /// Matrix to transform vertex from NDC to local space.
-    wvp_inverse: Mat3,
-    /// widget在canvas里的绘制顺序
-    draw_idx: u32,
-    cursor_states: [WidgetCursorState; 8]
-}
-
-impl WidgetRuntimeInfo {
-
-    pub fn new() -> Self {
-        Self {
-            dirty: true,
-            size: vec2(0., 0.),
-            wvp: Mat3::one(),
-            wvp_inverse: Mat3::one(),
-            draw_idx: 0,
-            cursor_states: [WidgetCursorState::Idle; 8]
-        }
-    }
-
-}
-
 pub struct Widget {
     pub scl: Vec2,
     pub pivot: Vec2,
@@ -138,7 +108,7 @@ pub struct Widget {
     pub layout_x: LayoutType,
     pub layout_y: LayoutType,
     pub raycast: bool,
-    runtime_info: WidgetRuntimeInfo,
+    runtime_info: internal::WidgetRuntimeInfo,
 }
 
 impl Component for Widget {
@@ -154,7 +124,7 @@ impl Widget {
             rot: 0.,
             layout_x: LayoutType::Normal { align: AlignType::Middle, pos: 0.0, len: 100. },
             layout_y: LayoutType::Normal { align: AlignType::Middle, pos: 0.0, len: 100. },
-            runtime_info: WidgetRuntimeInfo::new(),
+            runtime_info: internal::WidgetRuntimeInfo::new(),
             raycast: false
         }
     }
@@ -204,44 +174,103 @@ enum UIEvent {
     Clicked { entity: Entity, btn: u8 }
 }
 
-struct ImageBatchContext<'a, 'b> {
-    entities: &'a Entities<'b>,
-    hierarchy: &'a Hierarchy<HasParent>,
-    widget_vec: &'a ReadStorage<'b, Widget>,
-    image_read: &'a ReadStorage<'b, Image>,
-    batcher: &'a mut UIBatcher
+/// An UI image. Size goes with Widget size.
+pub struct Image {
+    pub sprite: Option<SpriteRef>,
+    pub material: Option<ResourceRef<Material>>,
+    pub color: Color
 }
 
-impl<'a, 'b> ImageBatchContext<'a, 'b> {
-
-
-}
-
-fn _calc_layout(parent_length: f32, layout: LayoutType, pivot: f32) -> (f32, f32) {
-    match layout {
-        LayoutType::Normal { align, pos, len } => {
-            let pivot_pos = align.ratio() * parent_length;
-            (pivot_pos + pos - len * pivot, len)
-        },
-        LayoutType::Expand { off_n, off_p } => {
-            let parent_end = parent_length;
-            let self_start = off_n;
-            let self_end = parent_end - off_p;
-            (self_start, self_end - self_start)
-        },
+impl Image {
+    pub fn new() -> Self {
+        Image { sprite: None, material: None, color: Color::white() }
     }
 }
 
-fn calc_widget_mat(offset: Vec2, scl: Vec2, rot: f32) -> Mat3 {
-    let translation_mat = mat3::translate(offset);
-    // TODO: 支持scl和rot
-    translation_mat
+impl Component for Image {
+    type Storage = VecStorage<Self>;
+}
+
+pub struct UIModule;
+
+impl Module for UIModule {
+    fn init(&self, init_data: &mut InitData) {
+        use super::graphics;
+        // 这个其实不用insert到thread local，但是执行依赖关系不好处理
+        init_data.group_thread_local.dispatch(
+            InsertInfo::new("ui_layout").before(&[&graphics::DEP_RENDER_SETUP]),
+            |i| i.insert_thread_local(internal::UIUpdateSystem {})
+        );
+
+        init_data.group_thread_local.dispatch(
+            InsertInfo::new("ui_images").after(&["ui_layout"]).before(&["ui_render"]),
+            |i| i.insert_thread_local(internal::UIImageBatchSystem {})
+        );
+
+        let display_rc = init_data.display.clone();
+        init_data.group_thread_local.dispatch(
+            InsertInfo::new("ui_render")
+                .after(&[graphics::DEP_RENDER_SETUP]).before(&[graphics::DEP_RENDER_TEARDOWN])
+                .order(graphics::render_order::UI),
+            |i| i.insert_thread_local(internal::UIRenderSystem::new(display_rc))
+        );
+    }
 }
 
 mod internal {
     use crate::client::input::ButtonState;
-
     use super::*;
+
+    // #[derive(Default)]
+    pub struct WidgetRuntimeInfo {
+        /// Whether widget rect needs to be recalculated.
+        pub dirty: bool,
+        /// Size in local space.
+        pub size: Vec2,
+        /// Matrix to transform vertex from local space to NDC.
+        pub wvp: Mat3,
+        /// Matrix to transform vertex from NDC to local space.
+        pub wvp_inverse: Mat3,
+        /// widget在canvas里的绘制顺序
+        pub draw_idx: u32,
+        cursor_states: [WidgetCursorState; 8]
+    }
+
+    impl WidgetRuntimeInfo {
+
+        pub fn new() -> Self {
+            Self {
+                dirty: true,
+                size: vec2(0., 0.),
+                wvp: Mat3::one(),
+                wvp_inverse: Mat3::one(),
+                draw_idx: 0,
+                cursor_states: [WidgetCursorState::Idle; 8]
+            }
+        }
+
+    }
+
+    fn _calc_layout(parent_length: f32, layout: LayoutType, pivot: f32) -> (f32, f32) {
+        match layout {
+            LayoutType::Normal { align, pos, len } => {
+                let pivot_pos = align.ratio() * parent_length;
+                (pivot_pos + pos - len * pivot, len)
+            },
+            LayoutType::Expand { off_n, off_p } => {
+                let parent_end = parent_length;
+                let self_start = off_n;
+                let self_end = parent_end - off_p;
+                (self_start, self_end - self_start)
+            },
+        }
+    }
+
+    fn calc_widget_mat(offset: Vec2, scl: Vec2, rot: f32) -> Mat3 {
+        let translation_mat = mat3::translate(offset);
+        // TODO: 支持scl和rot
+        translation_mat
+    }
 
     pub struct UICursorData {
         pub cursor_ndc: Vec2,
@@ -276,7 +305,7 @@ mod internal {
                 let (y, height) = _calc_layout(frame.size.y,
                                                widget.layout_y, widget.pivot.y);
 
-            widget.runtime_info.size = vec2(width, height);
+                widget.runtime_info.size = vec2(width, height);
                 widget.runtime_info.wvp = frame.wvp * calc_widget_mat(vec2(x, y),
                                                                       widget.scl, widget.rot);
                 widget.runtime_info.wvp_inverse = widget.runtime_info.wvp.invert().unwrap();
@@ -297,7 +326,7 @@ mod internal {
     }
 
     pub fn _update_widget_input(ctx: &mut WidgetRecurseContextMut, entity: Entity, input: &UICursorData)
-                            -> u8 { // 返回值是子节点或自己是否已经处理hover/click
+                                -> u8 { // 返回值是子节点或自己是否已经处理hover/click
         let mut button_flags: u8 = 0;
         for child in ctx.hierarchy.children(entity) {
             button_flags |= _update_widget_input(ctx, *child, &input);
@@ -399,276 +428,238 @@ mod internal {
             // info!("cursor pos: {:?}", input.cursor_position);
         }
     }
-}
 
-
-
-/// An UI image. Size goes with Widget size.
-pub struct Image {
-    pub sprite: Option<SpriteRef>,
-    pub material: Option<ResourceRef<Material>>,
-    pub color: Color
-}
-
-impl Image {
-    pub fn new() -> Self {
-        Image { sprite: None, material: None, color: Color::white() }
+    enum DrawInstance {
+        Image {
+            wvp: Mat4,
+            sprite: Option<SpriteRef>,
+            material: Option<ResourceRef<Material>>,
+            color: Color
+        },
+        Text {  }
     }
-}
 
-impl Component for Image {
-    type Storage = VecStorage<Self>;
-}
-
-// UI drawing: 需要每个canvas顺序绘制 所以实际的绘制顺序应该是
-// Canvas1-S1S2S3... Canvas2-S1S2S3...
-// 和系统的执行顺序存在交错
-// 这个先不处理了 等到wgpu-rs切换的时候更好处理
-
-#[derive(Copy, Clone)]
-struct ImageVertex {
-    v_pos: [f32; 2],
-    v_uv: [f32; 2],
-}
-
-impl ImageVertex {
-    fn new(x: f32, y: f32, u: f32, v: f32) -> Self {
-        Self {
-            v_pos: [x, y],
-            v_uv: [u, v]
-        }
+    pub struct UIBatcher {
+        ls: Vec<(u32, DrawInstance)>
     }
-}
 
-glium::implement_vertex!(ImageVertex, v_pos, v_uv);
+    impl UIBatcher {
 
-#[derive(Copy, Clone, Default)]
-struct ImageInstanceData {
-    i_wvp: [[f32; 4]; 4],
-    i_uv_min: [f32; 2],
-    i_uv_max: [f32; 2],
-    i_color: [f32; 4]
-}
-
-glium::implement_vertex!(ImageInstanceData, i_wvp, i_uv_min, i_uv_max, i_color);
-
-struct UIImageBatchSystem {
-}
-
-impl UIImageBatchSystem {
-
-    fn _walk<'a>(ctx: &mut ImageBatchContext, entity: Entity) {
-        if let Some(image) = ctx.image_read.get(entity) {
-            let widget = ctx.widget_vec.get(entity).unwrap();
-            // 这里再乘一个 size 把 [0,1] 的顶点坐标缩放
-            let wvp = widget.runtime_info.wvp * mat3::scale(widget.runtime_info.size);
-            let final_wvp = mat3::extend_to_mat4(&wvp);
-
-            ctx.batcher.batch(widget.runtime_info.draw_idx, DrawInstance::Image {
-                sprite: image.sprite.clone(),
-                material: image.material.clone(),
-                color: image.color,
-                wvp: final_wvp
-            });
+        pub fn new() -> Self {
+            Self { ls: vec![] }
         }
 
-        for child in ctx.hierarchy.children(entity) {
-            Self::_walk(ctx, child.clone());
+        fn batch(&mut self, id: u32, instance: DrawInstance) {
+            self.ls.push((id, instance));
         }
+
+        fn finish(&mut self) -> Vec<DrawInstance> {
+            let mut result = Vec::<(u32, DrawInstance)>::new();
+            std::mem::swap(&mut result, &mut self.ls);
+
+            result.sort_by_key(|(id, _)| *id);
+            result.into_iter().map(|x| x.1).collect()
+        }
+
     }
-}
 
-impl<'a> System<'a> for UIImageBatchSystem {
-    type SystemData = (
-        WriteStorage<'a, Canvas>,
-        Entities<'a>, ReadExpect<'a, Hierarchy<HasParent>>,
-        ReadStorage<'a, Widget>,
-        ReadStorage<'a, Image>);
 
-    fn run(&mut self, (mut canvas, entities, hierarchy, widget_storage, image_storage): Self::SystemData) {
-        for (ent, canvas) in (&entities, &mut canvas).join() {
-            let mut ctx = ImageBatchContext {
-                entities: &entities,
-                hierarchy: &hierarchy,
-                widget_vec: &widget_storage,
-                image_read: &image_storage,
-                batcher: &mut canvas.batcher
-            };
+    struct ImageBatchContext<'a, 'b> {
+        entities: &'a Entities<'b>,
+        hierarchy: &'a Hierarchy<HasParent>,
+        widget_vec: &'a ReadStorage<'b, Widget>,
+        image_read: &'a ReadStorage<'b, Image>,
+        batcher: &'a mut UIBatcher
+    }
 
-            for child in ctx.hierarchy.children(ent) {
-                Self::_walk(&mut ctx, child.clone());
+    impl<'a, 'b> ImageBatchContext<'a, 'b> {
+    }
+
+    pub struct UIImageBatchSystem {
+    }
+
+    impl UIImageBatchSystem {
+
+        fn _walk<'a>(ctx: &mut ImageBatchContext, entity: Entity) {
+            if let Some(image) = ctx.image_read.get(entity) {
+                let widget = ctx.widget_vec.get(entity).unwrap();
+                // 这里再乘一个 size 把 [0,1] 的顶点坐标缩放
+                let wvp = widget.runtime_info.wvp * mat3::scale(widget.runtime_info.size);
+                let final_wvp = mat3::extend_to_mat4(&wvp);
+
+                ctx.batcher.batch(widget.runtime_info.draw_idx, DrawInstance::Image {
+                    sprite: image.sprite.clone(),
+                    material: image.material.clone(),
+                    color: image.color,
+                    wvp: final_wvp
+                });
+            }
+
+            for child in ctx.hierarchy.children(entity) {
+                Self::_walk(ctx, child.clone());
             }
         }
     }
 
-}
-
-enum DrawInstance {
-    Image {
-        wvp: Mat4,
-        sprite: Option<SpriteRef>,
-        material: Option<ResourceRef<Material>>,
-        color: Color
-    },
-    Text {  }
-}
-
-struct UIBatcher {
-    ls: Vec<(u32, DrawInstance)>
-}
-
-impl UIBatcher {
-
-    fn new() -> Self {
-        Self { ls: vec![] }
+    #[derive(Copy, Clone)]
+    struct ImageVertex {
+        v_pos: [f32; 2],
+        v_uv: [f32; 2],
     }
 
-    fn batch(&mut self, id: u32, instance: DrawInstance) {
-        self.ls.push((id, instance));
-    }
-
-    fn finish(&mut self) -> Vec<DrawInstance> {
-        let mut result = Vec::<(u32, DrawInstance)>::new();
-        std::mem::swap(&mut result, &mut self.ls);
-
-        result.sort_by_key(|(id, _)| *id);
-        result.into_iter().map(|x| x.1).collect()
-    }
-
-}
-
-pub struct UIModule;
-
-struct UIImageRenderData {
-    default_program: ResourceRef<Program>,
-    vbo: VertexBuffer<ImageVertex>,
-    ibo: IndexBuffer<u16>,
-    white_texture: ResourceRef<Texture>
-}
-
-impl UIImageRenderData {
-    
-    fn new(display: &Display) -> Self {
-        use crate::client::graphics;
-        let program = graphics::load_shader_by_content(display,
-                                                       include_str!("../../assets/ui_image_default.vert"),
-                                                       include_str!("../../assets/ui_image_default.frag"));
-
-        let vbo = VertexBuffer::new(display, &[
-            ImageVertex::new(0., 0., 0., 0.),
-            ImageVertex::new(0., 1., 0., 1.),
-            ImageVertex::new(1., 1., 1., 1.),
-            ImageVertex::new(1., 0., 1., 0.)
-        ]).unwrap();
-
-        let ibo = IndexBuffer::new(
-            display,
-            PrimitiveType::TrianglesList,
-            &[0u16, 1, 2, 0, 2, 3]).unwrap();
-        
-        let white_texture = graphics::create_texture(display, vec![255, 255, 255, 255], (1, 1));
-        
-        Self {
-            default_program: program,
-            vbo, ibo,
-            white_texture
-        }
-    }
-}
-
-struct UIRenderSystem {
-    image_data: UIImageRenderData,
-    display: Rc<Display>
-}
-
-impl UIRenderSystem {
-
-    fn new(display: Rc<Display>) -> Self {
-        Self {
-            image_data: UIImageRenderData::new(&display),
-            display
+    impl ImageVertex {
+        fn new(x: f32, y: f32, u: f32, v: f32) -> Self {
+            Self {
+                v_pos: [x, y],
+                v_uv: [u, v]
+            }
         }
     }
 
-}
+    glium::implement_vertex!(ImageVertex, v_pos, v_uv);
 
-impl<'a> System<'a> for UIRenderSystem {
-    type SystemData = WriteStorage<'a, Canvas>;
+    #[derive(Copy, Clone, Default)]
+    struct ImageInstanceData {
+        i_wvp: [[f32; 4]; 4],
+        i_uv_min: [f32; 2],
+        i_uv_max: [f32; 2],
+        i_color: [f32; 4]
+    }
 
-    fn run(&mut self, mut data: Self::SystemData) {
-        use crate::client::graphics;
-        use crate::asset;
+    glium::implement_vertex!(ImageInstanceData, i_wvp, i_uv_min, i_uv_max, i_color);
 
-        graphics::with_render_data(|f| {
-            asset::with_local_resource_mgr(|res_mgr| {
-                let image_data = &self.image_data;
-                let img_default_program = res_mgr.get(&image_data.default_program);
-                let img_white_texture = res_mgr.get(&self.image_data.white_texture);
-                for canvas in (&mut data).join() {
-                    let draw_calls = canvas.batcher.finish();
-                    for draw in draw_calls {
-                        match draw {
-                            DrawInstance::Image {
-                                wvp, sprite, material, color
-                            } => {
-                                let program = img_default_program;
-                                let (texture, uv0, uv1) = match &sprite {
-                                    Some(sr) => {
-                                        let sheet = res_mgr.get(&sr.sheet);
-                                        let texture = res_mgr.get(&sheet.texture);
-                                        let spr_data = &sheet.sprites[sr.idx];
-                                        (texture, spr_data.uv_min, spr_data.uv_max)
-                                    }
-                                    None => {
-                                        (img_white_texture, vec2(0., 0.), vec2(1., 1.))
-                                    }
-                                };
-                                let uniform_block = glium::uniform! {
+    impl<'a> System<'a> for UIImageBatchSystem {
+        type SystemData = (
+            WriteStorage<'a, Canvas>,
+            Entities<'a>, ReadExpect<'a, Hierarchy<HasParent>>,
+            ReadStorage<'a, Widget>,
+            ReadStorage<'a, Image>);
+
+        fn run(&mut self, (mut canvas, entities, hierarchy, widget_storage, image_storage): Self::SystemData) {
+            for (ent, canvas) in (&entities, &mut canvas).join() {
+                let mut ctx = ImageBatchContext {
+                    entities: &entities,
+                    hierarchy: &hierarchy,
+                    widget_vec: &widget_storage,
+                    image_read: &image_storage,
+                    batcher: &mut canvas.batcher
+                };
+
+                for child in ctx.hierarchy.children(ent) {
+                    Self::_walk(&mut ctx, child.clone());
+                }
+            }
+        }
+
+    }
+
+    struct UIImageRenderData {
+        default_program: ResourceRef<Program>,
+        vbo: VertexBuffer<ImageVertex>,
+        ibo: IndexBuffer<u16>,
+        white_texture: ResourceRef<Texture>
+    }
+
+    impl UIImageRenderData {
+
+        fn new(display: &Display) -> Self {
+            use crate::client::graphics;
+            let program = graphics::load_shader_by_content(display,
+                                                           include_str!("../../assets/ui_image_default.vert"),
+                                                           include_str!("../../assets/ui_image_default.frag"));
+
+            let vbo = VertexBuffer::new(display, &[
+                ImageVertex::new(0., 0., 0., 0.),
+                ImageVertex::new(0., 1., 0., 1.),
+                ImageVertex::new(1., 1., 1., 1.),
+                ImageVertex::new(1., 0., 1., 0.)
+            ]).unwrap();
+
+            let ibo = IndexBuffer::new(
+                display,
+                PrimitiveType::TrianglesList,
+                &[0u16, 1, 2, 0, 2, 3]).unwrap();
+
+            let white_texture = graphics::create_texture(display, vec![255, 255, 255, 255], (1, 1));
+
+            Self {
+                default_program: program,
+                vbo, ibo,
+                white_texture
+            }
+        }
+    }
+
+    pub struct UIRenderSystem {
+        image_data: UIImageRenderData,
+        display: Rc<Display>
+    }
+
+    impl UIRenderSystem {
+
+        pub fn new(display: Rc<Display>) -> Self {
+            Self {
+                image_data: UIImageRenderData::new(&display),
+                display
+            }
+        }
+
+    }
+
+    impl<'a> System<'a> for UIRenderSystem {
+        type SystemData = WriteStorage<'a, Canvas>;
+
+        fn run(&mut self, mut data: Self::SystemData) {
+            use crate::client::graphics;
+            use crate::asset;
+
+            graphics::with_render_data(|f| {
+                asset::with_local_resource_mgr(|res_mgr| {
+                    let image_data = &self.image_data;
+                    let img_default_program = res_mgr.get(&image_data.default_program);
+                    let img_white_texture = res_mgr.get(&self.image_data.white_texture);
+                    for canvas in (&mut data).join() {
+                        let draw_calls = canvas.batcher.finish();
+                        for draw in draw_calls {
+                            match draw {
+                                DrawInstance::Image {
+                                    wvp, sprite, material, color
+                                } => {
+                                    let program = img_default_program;
+                                    let (texture, uv0, uv1) = match &sprite {
+                                        Some(sr) => {
+                                            let sheet = res_mgr.get(&sr.sheet);
+                                            let texture = res_mgr.get(&sheet.texture);
+                                            let spr_data = &sheet.sprites[sr.idx];
+                                            (texture, spr_data.uv_min, spr_data.uv_max)
+                                        }
+                                        None => {
+                                            (img_white_texture, vec2(0., 0.), vec2(1., 1.))
+                                        }
+                                    };
+                                    let uniform_block = glium::uniform! {
                                     u_texture: &texture.raw_texture
                                 };
 
-                                let instance_buf = VertexBuffer::new(&*self.display, &[ImageInstanceData {
-                                    i_wvp: wvp.into(),
-                                    i_uv_min: [uv0.x, uv0.y],
-                                    i_uv_max: [uv1.x, uv1.y],
-                                    i_color: color.into()
-                                }]).unwrap();
+                                    let instance_buf = VertexBuffer::new(&*self.display, &[ImageInstanceData {
+                                        i_wvp: wvp.into(),
+                                        i_uv_min: [uv0.x, uv0.y],
+                                        i_uv_max: [uv1.x, uv1.y],
+                                        i_color: color.into()
+                                    }]).unwrap();
 
-                                f.frame.draw((&image_data.vbo, instance_buf.per_instance().unwrap()),
-                                             &image_data.ibo,
-                                             program, &uniform_block,
-                                             &Default::default()).unwrap();
-                            },
-                            _ => unimplemented!()
+                                    f.frame.draw((&image_data.vbo, instance_buf.per_instance().unwrap()),
+                                                 &image_data.ibo,
+                                                 program, &uniform_block,
+                                                 &Default::default()).unwrap();
+                                },
+                                _ => unimplemented!()
+                            }
                         }
                     }
-                }
+                });
             });
-        });
-    }
-}
-
-impl Module for UIModule {
-    fn init(&self, init_data: &mut InitData) {
-        use super::graphics;
-        // 这个其实不用insert到thread local，但是执行依赖关系不好处理
-        init_data.group_thread_local.dispatch(
-            InsertInfo::new("ui_layout").before(&[&graphics::DEP_RENDER_SETUP]),
-            |i| i.insert_thread_local(internal::UIUpdateSystem {})
-        );
-
-        init_data.group_thread_local.dispatch(
-            InsertInfo::new("ui_images").after(&["ui_layout"]).before(&["ui_render"]),
-            |i| i.insert_thread_local(UIImageBatchSystem {})
-        );
-
-        let display_rc = init_data.display.clone();
-        init_data.group_thread_local.dispatch(
-            InsertInfo::new("ui_render")
-                .after(&[graphics::DEP_RENDER_SETUP]).before(&[graphics::DEP_RENDER_TEARDOWN])
-                .order(graphics::render_order::UI),
-            |i| i.insert_thread_local(UIRenderSystem::new(display_rc))
-        );
+        }
     }
 }
 
@@ -677,7 +668,7 @@ mod test {
     use specs::{Builder, DispatcherBuilder, World, WorldExt};
     use specs_hierarchy::HierarchySystem;
 
-    use crate::client::ui::{AlignType, Canvas, internal, LayoutType, RefResolution, UIBatcher, Widget};
+    use crate::client::ui::{AlignType, Canvas, internal, LayoutType, RefResolution, Widget};
     use crate::client::WindowInfo;
     use crate::ecs::HasParent;
     use crate::math::{vec2};
@@ -702,7 +693,7 @@ mod test {
                     height: 1080,
                     scale_dimension: 0.5
                 },
-                batcher: UIBatcher::new()
+                batcher: internal::UIBatcher::new()
             })
             .build();
 
