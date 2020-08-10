@@ -2,16 +2,20 @@ extern crate glium;
 #[macro_use]
 pub extern crate log;
 extern crate serde;
-extern crate simplelog;
 extern crate specs;
 
 use std::rc::Rc;
 
 use glium::Display;
-use glutin;
-use glutin::event;
-use glutin::event_loop::ControlFlow;
-use simplelog::*;
+use winit::{
+    event::*,
+    event_loop,
+    event_loop::ControlFlow,
+    window::{Window, WindowBuilder}
+};
+// use glutin;
+// use glutin::event;
+// use glutin::event_loop::ControlFlow;
 use specs::prelude::*;
 
 use crate::asset::ResManager;
@@ -20,8 +24,9 @@ use crate::client::WindowInfo;
 use crate::ecs::{Time, HasParent};
 use std::sync::atomic::{AtomicBool, Ordering};
 use specs_hierarchy::HierarchySystem;
+use std::cell::RefCell;
 
-pub type WindowEventLoop = glutin::event_loop::EventLoop<()>;
+pub type WindowEventLoop = event_loop::EventLoop<()>;
 
 pub mod asset;
 pub mod ecs;
@@ -252,15 +257,15 @@ impl<T: TDispatchItem> DispatchGroup<T> {
 pub struct InitData {
     group_normal: DispatchGroup<DispatchItem>,
     group_thread_local: DispatchGroup<ThreadLocalDispatchItem>,
-    pub display: Rc<Display>
+    pub wgpu_state: Rc<RefCell<WgpuState>>
 }
 
 impl InitData {
-    pub fn new(display: Rc<Display>) -> InitData {
+    pub fn new(wgpu_state: Rc<RefCell<WgpuState>>) -> InitData {
         InitData {
             group_normal: DispatchGroup::new(),
             group_thread_local: DispatchGroup::new(),
-            display
+            wgpu_state
         }
     }
 
@@ -304,7 +309,7 @@ impl InitData {
 /// Data when just before game starts. Usually used to setup the world initial entities.
 pub struct StartData<'a> {
     pub world: &'a mut specs::World,
-    pub display: Rc<Display>
+    pub wgpu_state: Rc<RefCell<WgpuState>>
 }
 
 /// Modules inject into the game's startup process, and are
@@ -350,21 +355,11 @@ impl RuntimeBuilder {
 
     pub fn build(mut self) -> Runtime {
         // ======= WINDOWS CREATION =======
-        let (display, event_loop) = {
-            let event_loop = WindowEventLoop::new();
-            let wb = glutin::window::WindowBuilder::new().with_title(self.name.clone());
-            let cb = glutin::ContextBuilder::new()
-                //            .with_vsync(true)
-                .with_srgb(true);
-            (
-                Rc::new(glium::Display::new(wb, cb, &event_loop).unwrap()),
-                event_loop,
-            )
-        };
+        let client_data = futures::executor::block_on(ClientRuntimeData::new(self.name));
 
         // ======= INIT =======
         let mut dispatcher_builder = specs::DispatcherBuilder::new();
-        let mut init_data = crate::InitData::new(display.clone());
+        let mut init_data = crate::InitData::new(client_data.wgpu_state.clone());
         let mut world = World::new();
 
         // Default systems
@@ -385,14 +380,14 @@ impl RuntimeBuilder {
         world.insert(ResManager::new());
 
         let mut window_info = WindowInfo::new();
-        let screen_size = display.gl_window().window().inner_size();
+        let screen_size = client_data.window.inner_size();
         window_info.pixel_size = (screen_size.width, screen_size.height);
         world.insert(window_info);
 
         // ======= START =======
         let mut start_data = crate::StartData {
             world: &mut world,
-            display: display.clone()
+            wgpu_state: client_data.wgpu_state.clone()
         };
         for game_module in &self.modules {
             game_module.start(&mut start_data);
@@ -401,8 +396,75 @@ impl RuntimeBuilder {
         Runtime {
             dispatcher,
             world,
-            display,
-            event_loop
+            client_data
+        }
+    }
+
+}
+
+pub struct WgpuState {
+    surface: wgpu::Surface,
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    sc_desc: wgpu::SwapChainDescriptor,
+    swap_chain: wgpu::SwapChain,
+}
+
+impl WgpuState {
+
+    pub async fn new(window: &Window) -> Self {
+        let surface = wgpu::Surface::create(window);
+        let adapter = wgpu::Adapter::request(
+            &wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::Default,
+                compatible_surface: Some(&surface)
+            },
+            wgpu::BackendBit::PRIMARY
+        ).await.unwrap();
+
+        let (device, queue) = adapter.request_device(&Default::default()).await;
+        let size = window.inner_size();
+
+        let sc_desc = wgpu::SwapChainDescriptor {
+            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            width: size.width,
+            height: size.height,
+            present_mode: wgpu::PresentMode::Fifo
+        };
+
+        let swap_chain = device.create_swap_chain(&surface, &sc_desc);
+        Self {
+            surface,
+            adapter,
+            device,
+            queue,
+            sc_desc,
+            swap_chain
+        }
+    }
+
+}
+
+pub struct ClientRuntimeData {
+    event_loop: WindowEventLoop,
+    window: Rc<Window>,
+    wgpu_state: Rc<RefCell<WgpuState>>
+}
+
+impl ClientRuntimeData {
+
+    async fn new(title: String) -> Self {
+        let event_loop = WindowEventLoop::new();
+        let wb = WindowBuilder::new().with_title(title);
+        let window = Rc::new(wb.build(&event_loop).unwrap());
+        let wgpu_state = WgpuState::new(&*window).await;
+        let wgpu_state = Rc::new(RefCell::new(wgpu_state));
+        Self {
+            event_loop,
+            window,
+            wgpu_state
         }
     }
 
@@ -412,23 +474,21 @@ impl RuntimeBuilder {
 pub struct Runtime {
     dispatcher: Dispatcher<'static, 'static>,
     world: World,
-    // Client only
-    display: Rc<Display>,
-    event_loop: WindowEventLoop
+    client_data: ClientRuntimeData
 }
 
 impl Runtime {
 
     pub fn start(self) {
-        let display = self.display;
         let mut dispatcher = self.dispatcher;
         let mut world = self.world;
-        self.event_loop.run(move |event, _, control_flow| {
+        let window = self.client_data.window;
+        self.client_data.event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
 
             match &event {
-                event::Event::WindowEvent {
-                    event: event::WindowEvent::ScaleFactorChanged { scale_factor, .. }, ..
+                Event::WindowEvent {
+                    event: WindowEvent::ScaleFactorChanged { scale_factor, .. }, ..
                 } => {
                     info!("Scale factor changed!! {}", scale_factor);
                 }
@@ -446,26 +506,26 @@ impl Runtime {
 
             if let Some(event) = opt_ev {
                 match event {
-                    event::Event::LoopDestroyed => return,
-                    event::Event::MainEventsCleared => {
-                        Self::update_one_frame(&*display, &mut world, &mut dispatcher);
+                    Event::LoopDestroyed => return,
+                    Event::MainEventsCleared => {
+                        Self::update_one_frame(&*window, &mut world, &mut dispatcher);
                     },
-                    event::Event::WindowEvent { event, .. } => {
+                    Event::WindowEvent { event, .. } => {
                         let mut raw_input = world.write_resource::<RawInputData>();
                         raw_input.on_window_event(&event);
                         match event {
-                            event::WindowEvent::Resized(physical_size) => {
-                                display.gl_window().resize(physical_size);
+                            WindowEvent::Resized(physical_size) => {
+                                window.set_inner_size(physical_size);
                                 let mut window_info = world.write_resource::<WindowInfo>();
                                 window_info.pixel_size = (physical_size.width, physical_size.height)
                             }
-                            event::WindowEvent::CloseRequested => {
+                            WindowEvent::CloseRequested => {
                                 *control_flow = glutin::event_loop::ControlFlow::Exit;
                             },
                             _ => ()
                         }
                     }
-                    event::Event::DeviceEvent { event, .. } => {
+                    Event::DeviceEvent { event, .. } => {
                         let mut raw_input = world.write_resource::<RawInputData>();
                         raw_input.on_device_event(&event);
                     }
@@ -475,7 +535,7 @@ impl Runtime {
         })
     }
 
-    fn update_one_frame(display: &Display, world: &mut World, dispatcher: &mut Dispatcher<'static, 'static>) {
+    fn update_one_frame(window: &Window, world: &mut World, dispatcher: &mut Dispatcher<'static, 'static>) {
         { // DeltaTime update
             let mut time = world.write_resource::<ecs::Time>();
             time.update_delta_time();
@@ -491,8 +551,8 @@ impl Runtime {
         { // Window info update
             let mut window_info = world.write_resource::<WindowInfo>();
             window_info.frame_event_list.clear();
-            display.gl_window().window().set_cursor_grab(window_info.grab_cursor_count > 0)
-                .unwrap_or_default();
+            window.set_cursor_grab(window_info.grab_cursor_count > 0)
+                .expect("Can't set cursor grab");
         }
 
         // 帧末释放所有资源
@@ -506,12 +566,15 @@ impl Runtime {
 /// For single-instance games, first time creating `RuntimeBuilder` will call this.
 pub fn common_init() {
     assert_eq!(COMMON_INITIALIZED.load(Ordering::SeqCst), false, "Can't common_init twice");
-    CombinedLogger::init(
-        vec![
-            TermLogger::new(LevelFilter::Info, Config::default(), TerminalMode::Mixed),
-            // WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
-        ]
-    ).unwrap();
+    env_logger::Builder::new()
+        .parse_filters("info,gfx_backend_vulkan=warn")
+        .init();
+    // CombinedLogger::init(
+    //     vec![
+    //         TermLogger::new(LevelFilter::Info, Config::default(), TerminalMode::Mixed),
+    //         // WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
+    //     ]
+    // ).unwrap();
     COMMON_INITIALIZED.store(true, Ordering::SeqCst);
 }
 

@@ -10,8 +10,9 @@ client = []
 
 [dependencies]
 # Generic
-simplelog = "*"
+#simplelog = "*"
 log = "*"
+env_logger = "0.7.1"
 uuid = { version = "0.8.1", features = ["v4"] }
 
 serde = { version = "1.0", features = ["derive"] }
@@ -23,6 +24,7 @@ specs-hierarchy = "0.6"
 cgmath = "*"
 rand = "*"
 image = "*"
+futures = "*"
 
 # Client only
 glium = "*"
@@ -30,3 +32,5 @@ glutin = "*"
 imgui = "*"
 imgui-glium-renderer = "*"
 imgui-winit-support = "*"
+winit = "0.22"
+wgpu = "0.5"

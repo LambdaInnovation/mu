@@ -2,11 +2,11 @@
 use glutin;
 use glutin::event;
 
-pub mod graphics;
+// pub mod graphics;
 pub mod input;
-pub mod editor;
-pub mod sprite;
-pub mod ui;
+// pub mod editor;
+// pub mod sprite;
+// pub mod ui;
 
 /// A specs `Resource`. contains information about window.
 pub struct WindowInfo {
