@@ -1,15 +1,12 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use glium::{Display, Frame, Program, Surface};
-use glium::program::ProgramCreationInput;
-use glium::texture::RawImage2d;
 use image::GenericImageView;
 use serde::Deserialize;
 use serde_json;
 use specs::prelude::*;
 
-use crate::asset;
+use crate::{asset, WgpuState};
 use crate::asset::{load_asset, load_asset_local, LoadableAsset, ResourceRef, LocalResManager};
 use crate::client::WindowInfo;
 use crate::ecs::Transform;
@@ -45,7 +42,7 @@ pub struct CamRenderData {
 }
 
 pub struct FrameRenderData {
-    pub frame: Frame,
+    pub encoder: wgpu::CommandEncoder,
     pub camera_infos: Vec<CamRenderData>,
 }
 
@@ -178,16 +175,20 @@ impl Component for Camera {
 }
 
 struct SysRenderPrepare {
-    display: Rc<Display>,
+    wgpu_state: Rc<RefCell<WgpuState>>,
 }
 
 pub struct SysRenderTeardown {}
 
 impl<'a> System<'a> for SysRenderPrepare {
-    type SystemData = (ReadExpect<'a, WindowInfo>, ReadStorage<'a, Camera>, ReadStorage<'a, Transform>);
+    type SystemData = (WriteExpect<'a, Option<CamRenderData>>, ReadExpect<'a, WindowInfo>, ReadStorage<'a, Camera>, ReadStorage<'a, Transform>);
 
-    fn run(&mut self, (window_info, cameras, transforms): Self::SystemData) {
-        let mut frame = self.display.draw();
+    fn run(&mut self, (mut render_data, window_info, cameras, transforms): Self::SystemData) {
+        let wgpu_state = self.wgpu_state.borrow();
+        let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Frame Default")
+        });
+        // let mut frame = self.display.draw();
         // Calculate wvp matrix
         let aspect: f32 = window_info.get_aspect_ratio();
         let cam_infos = {
@@ -216,7 +217,9 @@ impl<'a> System<'a> for SysRenderPrepare {
 
                 let wvp_matrix = projection * world_view;
                 match cam.clear_color {
-                    Some(color) => frame.clear_color_srgb(color.r, color.g, color.b, color.a),
+                    Some(color) => {
+                        unimplemented!("Clear color");
+                    }
                     _ => (),
                 }
 
@@ -230,10 +233,10 @@ impl<'a> System<'a> for SysRenderPrepare {
             res
         };
 
-        self::init_render_data(FrameRenderData {
-            frame,
-            camera_infos: cam_infos,
-        });
+        render_data.set(Some(FrameRenderData {
+            encoder,
+            camera_infos: cam_infos
+        }));
     }
 }
 

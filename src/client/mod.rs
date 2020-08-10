@@ -2,7 +2,7 @@
 use glutin;
 use glutin::event;
 
-// pub mod graphics;
+pub mod graphics;
 pub mod input;
 // pub mod editor;
 // pub mod sprite;
