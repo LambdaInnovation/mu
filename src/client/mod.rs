@@ -1,6 +1,4 @@
-
-use glutin;
-use glutin::event;
+use winit::event;
 
 pub mod graphics;
 pub mod input;

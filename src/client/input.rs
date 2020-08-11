@@ -1,6 +1,6 @@
 use crate::math::Vec2;
 use cgmath::vec2;
-use glutin::event;
+use winit::event;
 
 #[derive(Eq, PartialEq, Copy, Clone)]
 pub enum ButtonState {

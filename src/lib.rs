@@ -1,4 +1,3 @@
-extern crate glium;
 #[macro_use]
 pub extern crate log;
 extern crate serde;
@@ -6,7 +5,6 @@ extern crate specs;
 
 use std::rc::Rc;
 
-use glium::Display;
 use winit::{
     event::*,
     event_loop,
@@ -409,6 +407,7 @@ pub struct WgpuState {
     queue: wgpu::Queue,
     sc_desc: wgpu::SwapChainDescriptor,
     swap_chain: wgpu::SwapChain,
+    frame_texture: Option<wgpu::SwapChainOutput>
 }
 
 impl WgpuState {
@@ -434,14 +433,15 @@ impl WgpuState {
             present_mode: wgpu::PresentMode::Fifo
         };
 
-        let swap_chain = device.create_swap_chain(&surface, &sc_desc);
+        let mut swap_chain = device.create_swap_chain(&surface, &sc_desc);
         Self {
             surface,
             adapter,
             device,
             queue,
             sc_desc,
-            swap_chain
+            swap_chain,
+            frame_texture: None
         }
     }
 
@@ -483,6 +483,7 @@ impl Runtime {
         let mut dispatcher = self.dispatcher;
         let mut world = self.world;
         let window = self.client_data.window;
+        let wgpu_state = self.client_data.wgpu_state;
         self.client_data.event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
 
@@ -508,7 +509,7 @@ impl Runtime {
                 match event {
                     Event::LoopDestroyed => return,
                     Event::MainEventsCleared => {
-                        Self::update_one_frame(&*window, &mut world, &mut dispatcher);
+                        Self::update_one_frame(&*window, &mut world, &wgpu_state, &mut dispatcher);
                     },
                     Event::WindowEvent { event, .. } => {
                         let mut raw_input = world.write_resource::<RawInputData>();
@@ -520,7 +521,7 @@ impl Runtime {
                                 window_info.pixel_size = (physical_size.width, physical_size.height)
                             }
                             WindowEvent::CloseRequested => {
-                                *control_flow = glutin::event_loop::ControlFlow::Exit;
+                                *control_flow = winit::event_loop::ControlFlow::Exit;
                             },
                             _ => ()
                         }
@@ -535,14 +536,23 @@ impl Runtime {
         })
     }
 
-    fn update_one_frame(window: &Window, world: &mut World, dispatcher: &mut Dispatcher<'static, 'static>) {
+    fn update_one_frame(window: &Window,
+                        world: &mut World,
+                        wgpu_state_ref: &Rc<RefCell<WgpuState>>,
+                        dispatcher: &mut Dispatcher<'static, 'static>) {
         { // DeltaTime update
             let mut time = world.write_resource::<ecs::Time>();
             time.update_delta_time();
         }
 
+        // Swap texture
+        let mut wgpu_state = wgpu_state_ref.borrow_mut();
+        wgpu_state.frame_texture = Some(wgpu_state.swap_chain.get_next_texture().unwrap());
+
         dispatcher.dispatch(world);
         world.maintain();
+
+        wgpu_state.frame_texture = None;
 
         { // Control update
             let mut raw_input = world.write_resource::<RawInputData>();
