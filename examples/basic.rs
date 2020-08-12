@@ -38,13 +38,13 @@ impl<'a> System<'a> for ExampleSystem {
 
 impl mu::Module for ExampleModule {
 
-    fn init(&self, init_data: &mut mu::InitData) {
+    fn init(&self, init_data: &mut mu::InitContext) {
         info!("ExampleModule init");
         init_data.dispatch(mu::InsertInfo::new("example_module"), 
-            |f| { f.insert(ExampleSystem { timer: 0.0 }) });
+            |_, f| { f.insert(ExampleSystem { timer: 0.0 }) });
     }
 
-    fn start(&self, start_data: &mut mu::StartData) {
+    fn start(&self, start_data: &mut mu::StartContext) {
         start_data.world
             .create_entity()
             .with(ExampleCmpt { hp: 100 })

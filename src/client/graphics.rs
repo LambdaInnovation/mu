@@ -26,8 +26,8 @@ pub type UniformMat4 = [[f32; 4]; 4];
 pub type UniformMat3 = [[f32; 3]; 3];
 
 pub struct ShaderProgram {
-    vertex: wgpu::ShaderModule,
-    fragment: wgpu::ShaderModule,
+    pub vertex: wgpu::ShaderModule,
+    pub fragment: wgpu::ShaderModule,
     // bind groups
 }
 
@@ -90,11 +90,11 @@ impl LoadableAsset for TextureConfig {
 
 impl ResourcePool<ShaderProgram> {
 
-    pub fn load(&mut self, device: &wgpu::Device, path: &str) {
+    pub fn load(&mut self, device: &wgpu::Device, path: &str) -> ResourceRef<ShaderProgram> {
         let config: ShaderConfig = load_asset(path).unwrap();
         let vert: String = crate::asset::load_asset_local(&config._path, &config.vertex).unwrap();
         let frag: String = crate::asset::load_asset_local(&config._path, &config.fragment).unwrap();
-        self.load_by_content(device, &vert, &frag, &config.vertex, &config.fragment);
+        self.load_by_content(device, &vert, &frag, &config.vertex, &config.fragment)
     }
 
     pub fn load_by_content(&mut self, device: &wgpu::Device, vertex: &str, fragment: &str,
@@ -379,26 +379,24 @@ impl Material {
 pub struct GraphicsModule;
 
 impl Module for GraphicsModule {
-    fn init(&self, init_data: &mut crate::InitData) {
+    fn init(&self, init_data: &mut crate::InitContext) {
         use crate::InsertInfo;
         {
-            let wgpu_state = init_data.wgpu_state.clone();
             init_data.dispatch_thread_local(
                 InsertInfo::new(DEP_CAM_DRAW_SETUP)
                     .before(&[DEP_CAM_DRAW_TEARDOWN])
                     .order(100),
-                move |f| {
+                move |init_data, f| {
                     f.insert_thread_local(SysRenderPrepare {
-                        wgpu_state
+                        wgpu_state: init_data.wgpu_state.clone()
                     })
                 },
             );
         }
-        let wgpu_state = init_data.wgpu_state.clone();
         init_data.dispatch_thread_local(
             InsertInfo::new(DEP_CAM_DRAW_TEARDOWN).after(&[DEP_CAM_DRAW_SETUP]),
-            |f| f.insert_thread_local(SysRenderTeardown {
-                wgpu_state
+            |init_data, f| f.insert_thread_local(SysRenderTeardown {
+                wgpu_state: init_data.wgpu_state.clone()
             }),
         );
     }

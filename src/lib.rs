@@ -39,6 +39,8 @@ pub struct Insert<'a> {
     deps: &'a [&'a str],
 }
 
+// FIXME: 当前允许对一个 Insert 调用insert多次，需要加个runtime check然后报错
+
 impl<'a> Insert<'a> {
     pub fn insert<T>(self, system: T)
         where
@@ -111,7 +113,7 @@ trait TDispatchItem {
 
 struct DispatchItem {
     info: InsertInfo,
-    func: Box<dyn FnOnce(Insert)>,
+    func: Box<dyn FnOnce(&mut InitData, Insert)>,
 }
 
 impl TDispatchItem for DispatchItem {
@@ -122,7 +124,7 @@ impl TDispatchItem for DispatchItem {
 
 struct ThreadLocalDispatchItem {
     info: InsertInfo,
-    func: Box<dyn FnOnce(InsertThreadLocal)>,
+    func: Box<dyn FnOnce(&mut InitData, InsertThreadLocal)>,
 }
 
 impl TDispatchItem for ThreadLocalDispatchItem {
@@ -142,7 +144,7 @@ impl DispatchGroup<DispatchItem> {
 
     pub fn dispatch<F>(&mut self, info: InsertInfo, item: F)
         where
-            F: FnOnce(Insert) + 'static,
+            F: FnOnce(&mut InitData, Insert) + 'static,
     {
         self.items.push(DispatchItem {
             info,
@@ -155,7 +157,7 @@ impl DispatchGroup<ThreadLocalDispatchItem> {
 
     pub fn dispatch<F>(&mut self, info: InsertInfo, item: F)
         where
-            F: FnOnce(InsertThreadLocal) + 'static,
+            F: FnOnce(&mut InitData, InsertThreadLocal) + 'static,
     {
         self.items.push(ThreadLocalDispatchItem {
             info,
@@ -251,25 +253,33 @@ impl<T: TDispatchItem> DispatchGroup<T> {
     }
 }
 
-/// Data when game initializes. Usually used to setup all the systems.
 pub struct InitData {
-    group_normal: DispatchGroup<DispatchItem>,
-    group_thread_local: DispatchGroup<ThreadLocalDispatchItem>,
-    pub wgpu_state: Rc<RefCell<WgpuState>>
+    pub wgpu_state: Rc<RefCell<WgpuState>>,
+    pub res_mgr: ResManager
 }
 
-impl InitData {
-    pub fn new(wgpu_state: Rc<RefCell<WgpuState>>) -> InitData {
-        InitData {
+/// Data when game initializes. Usually used to setup all the systems.
+pub struct InitContext {
+    group_normal: DispatchGroup<DispatchItem>,
+    group_thread_local: DispatchGroup<ThreadLocalDispatchItem>,
+    init_data: InitData
+}
+
+impl InitContext {
+    pub fn new(res_mgr: ResManager, wgpu_state: Rc<RefCell<WgpuState>>) -> InitContext {
+        InitContext {
             group_normal: DispatchGroup::new(),
             group_thread_local: DispatchGroup::new(),
-            wgpu_state
+            init_data: InitData {
+                wgpu_state,
+                res_mgr
+            }
         }
     }
 
     pub fn dispatch<F>(&mut self, info: InsertInfo, func: F)
     where
-        F: FnOnce(Insert) + 'static,
+        F: FnOnce(&mut InitData, Insert) + 'static,
     {
         assert_eq!(info.order, 0, "Doesn't allow custom order");
         assert!(info.before_deps.is_empty(), "Doesn't allow before_deps");
@@ -279,33 +289,39 @@ impl InitData {
 
     pub fn dispatch_thread_local<F: 'static>(&mut self, info: InsertInfo, func: F)
     where
-        F: FnOnce(InsertThreadLocal) + 'static,
+        F: FnOnce(&mut InitData, InsertThreadLocal) + 'static,
     {
         self.group_thread_local.dispatch(info, func);
     }
 
-    pub fn post_dispatch(self, builder: &mut specs::DispatcherBuilder<'static, 'static>) {
-        self.group_normal.post_dispatch(|info| {
-            let deps_vec: Vec<&str> = info.info.deps.iter().map(|x| x.as_str()).collect();
-            let insert = Insert {
-                builder,
-                name: info.info.name.as_str(),
-                deps: deps_vec.as_slice(),
-            };
-            (info.func)(insert);
-        });
-        self.group_thread_local.post_dispatch(|info| {
-            let insert = InsertThreadLocal {
-                builder,
-                name: info.info.name.as_str(),
-            };
-            (info.func)(insert);
-        });
+    pub fn post_dispatch(mut self, world: &mut World, builder: &mut specs::DispatcherBuilder<'static, 'static>) {
+        {
+            let init_data = &mut self.init_data;
+            self.group_normal.post_dispatch(|info| {
+                let deps_vec: Vec<&str> = info.info.deps.iter().map(|x| x.as_str()).collect();
+                let insert = Insert {
+                    builder,
+                    name: info.info.name.as_str(),
+                    deps: deps_vec.as_slice(),
+                };
+                (info.func)(init_data, insert);
+            });
+
+            self.group_thread_local.post_dispatch(|info| {
+                let insert = InsertThreadLocal {
+                    builder,
+                    name: info.info.name.as_str(),
+                };
+                (info.func)(init_data, insert);
+            });
+        }
+
+        world.insert(self.init_data.res_mgr);
     }
 }
 
 /// Data when just before game starts. Usually used to setup the world initial entities.
-pub struct StartData<'a> {
+pub struct StartContext<'a> {
     pub world: &'a mut specs::World,
     pub wgpu_state: Rc<RefCell<WgpuState>>
 }
@@ -313,8 +329,8 @@ pub struct StartData<'a> {
 /// Modules inject into the game's startup process, and are
 ///  capable of adding Systems and Entities.
 pub trait Module {
-    fn init(&self, _init_data: &mut InitData) {}
-    fn start(&self, _start_data: &mut StartData) {}
+    fn init(&self, _init_data: &mut InitContext) {}
+    fn start(&self, _start_data: &mut StartContext) {}
     fn get_submodules(&mut self) -> Vec<Box<dyn Module>> {
         vec![]
     }
@@ -357,7 +373,8 @@ impl RuntimeBuilder {
 
         // ======= INIT =======
         let mut dispatcher_builder = specs::DispatcherBuilder::new();
-        let mut init_data = crate::InitData::new(client_data.wgpu_state.clone());
+        let res_mgr = ResManager::new();
+        let mut init_data = crate::InitContext::new(res_mgr, client_data.wgpu_state.clone());
         let mut world = World::new();
 
         // Default systems
@@ -367,7 +384,8 @@ impl RuntimeBuilder {
         for game_module in &mut self.modules {
             game_module.init(&mut init_data);
         }
-        init_data.post_dispatch(&mut dispatcher_builder);
+
+        init_data.post_dispatch(&mut world, &mut dispatcher_builder);
 
         let mut dispatcher = dispatcher_builder.build();
         dispatcher.setup(&mut world);
@@ -375,7 +393,6 @@ impl RuntimeBuilder {
         // Default resources
         world.insert(Time::default());
         world.insert(RawInputData::new());
-        world.insert(ResManager::new());
 
         let mut window_info = WindowInfo::new();
         let screen_size = client_data.window.inner_size();
@@ -383,7 +400,7 @@ impl RuntimeBuilder {
         world.insert(window_info);
 
         // ======= START =======
-        let mut start_data = crate::StartData {
+        let mut start_data = crate::StartContext {
             world: &mut world,
             wgpu_state: client_data.wgpu_state.clone()
         };
@@ -401,13 +418,13 @@ impl RuntimeBuilder {
 }
 
 pub struct WgpuState {
-    surface: wgpu::Surface,
-    adapter: wgpu::Adapter,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    sc_desc: wgpu::SwapChainDescriptor,
-    swap_chain: wgpu::SwapChain,
-    frame_texture: Option<wgpu::SwapChainOutput>
+    pub surface: wgpu::Surface,
+    pub adapter: wgpu::Adapter,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub swap_chain: wgpu::SwapChain,
+    pub frame_texture: Option<wgpu::SwapChainOutput>,
+    pub sc_desc: wgpu::SwapChainDescriptor,
 }
 
 impl WgpuState {
@@ -446,6 +463,8 @@ impl WgpuState {
     }
 
 }
+
+pub type WgpuStateCell = Rc<RefCell<WgpuState>>;
 
 pub struct ClientRuntimeData {
     event_loop: WindowEventLoop,
@@ -546,13 +565,18 @@ impl Runtime {
         }
 
         // Swap texture
-        let mut wgpu_state = wgpu_state_ref.borrow_mut();
-        wgpu_state.frame_texture = Some(wgpu_state.swap_chain.get_next_texture().unwrap());
+        {
+            let mut wgpu_state = wgpu_state_ref.borrow_mut();
+            wgpu_state.frame_texture = Some(wgpu_state.swap_chain.get_next_texture().unwrap());
+        }
 
         dispatcher.dispatch(world);
         world.maintain();
 
-        wgpu_state.frame_texture = None;
+        {
+            let mut wgpu_state = wgpu_state_ref.borrow_mut();
+            wgpu_state.frame_texture = None;
+        }
 
         { // Control update
             let mut raw_input = world.write_resource::<RawInputData>();
@@ -577,7 +601,7 @@ impl Runtime {
 pub fn common_init() {
     assert_eq!(COMMON_INITIALIZED.load(Ordering::SeqCst), false, "Can't common_init twice");
     env_logger::Builder::new()
-        .parse_filters("info,gfx_backend_vulkan=warn")
+        .parse_filters("info,gfx_backend_vulkan=warn,wgpu_core=warn")
         .init();
     // CombinedLogger::init(
     //     vec![
