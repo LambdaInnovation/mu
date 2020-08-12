@@ -1,8 +1,10 @@
 #version 450
 
-//uniform vec3 offset;
+layout(set=0,binding=0) uniform Uniforms {
+    vec3 offset;
+};
 
-layout (location=0) in vec3 position;
+layout(location=0) in vec3 position;
 
 layout(location=0) out vec4 v_color;
 
@@ -11,8 +13,7 @@ float map(float x) {
 }
 
 void main() {
-    vec4 world_pos = vec4(position, 1);
-//    vec4 world_pos = vec4(position + offset, 1);
+    vec4 world_pos = vec4(position + offset, 1);
     gl_Position = world_pos;
 
 //    float local_depth = clamp(-world_pos.z / 25.0, 0, 1);

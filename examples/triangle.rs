@@ -38,14 +38,22 @@ impl TriangleVertex {
 
 unsafe impl bytemuck::Pod for TriangleVertex {}
 unsafe impl bytemuck::Zeroable for TriangleVertex {}
-// glium::implement_vertex!(TriangleVertex, position);
+
+#[derive(Copy, Clone)]
+struct TriangleUniform {
+    offset: [f32; 3]
+}
+unsafe impl bytemuck::Pod for TriangleUniform {}
+unsafe impl bytemuck::Zeroable for TriangleUniform {}
 
 struct DrawTriangleSystem {
     wgpu_states: WgpuStateCell,
     program: ResourceRef<ShaderProgram>,
     vbo: wgpu::Buffer,
     ibo: wgpu::Buffer,
+    ubo: wgpu::Buffer,
     pipeline: wgpu::RenderPipeline,
+    bindgroup: wgpu::BindGroup,
     elapsed: f32,
 }
 
@@ -73,7 +81,7 @@ impl DrawTriangleSystem {
 
         let indices = [0u16, 1, 2];
 
-        let (vbo, ibo, pipeline) = {
+        let (vbo, ibo, ubo, pipeline, bindgroup) = {
             let wgpu_states = wgpu_states_ref.borrow();
             let vbo = wgpu_states.device.create_buffer_with_data(
                 bytemuck::cast_slice(&triangle),
@@ -85,8 +93,38 @@ impl DrawTriangleSystem {
                 wgpu::BufferUsage::INDEX
             );
 
+            let uniform_layout = wgpu_states.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                bindings: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::VERTEX,
+                    ty: wgpu::BindingType::UniformBuffer {
+                        dynamic: false
+                    }
+                }],
+                label: None
+            });
+
+            let ubo = wgpu_states.device.create_buffer_with_data(
+                bytemuck::cast_slice(&[TriangleUniform { offset: [0., 0., 0.] }]),
+                wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST
+            );
+
+            let uniform_bindgroup = wgpu_states.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &uniform_layout,
+                bindings: &[
+                    wgpu::Binding {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer {
+                            buffer: &ubo,
+                            range: 0..std::mem::size_of::<TriangleUniform>() as wgpu::BufferAddress
+                        },
+                    },
+                ],
+                label: None
+            });
+
             let render_pipeline_layout = wgpu_states.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                bind_group_layouts: &[],
+                bind_group_layouts: &[&uniform_layout],
             });
 
             let program = program_pool.get(&program_ref);
@@ -117,7 +155,7 @@ impl DrawTriangleSystem {
                 alpha_to_coverage_enabled: false
             });
 
-            (vbo, ibo, pipeline)
+            (vbo, ibo, ubo, pipeline, uniform_bindgroup)
         };
 
         Self {
@@ -125,7 +163,9 @@ impl DrawTriangleSystem {
             program: program_ref,
             vbo,
             ibo,
+            ubo,
             pipeline,
+            bindgroup,
             elapsed: 0.0
         }
     }
@@ -138,9 +178,21 @@ impl<'a> System<'a> for DrawTriangleSystem {
     fn run(&mut self, (time): Self::SystemData) {
         let wgpu_states = self.wgpu_states.borrow();
 
+        let dt = (*time).get_delta_time();
+        self.elapsed += dt;
+
+        let offset_y = 0.5 * f32::sin(2. * self.elapsed);
+        let tmp_buffer = wgpu_states.device.create_buffer_with_data(
+            bytemuck::cast_slice(&[TriangleUniform { offset: [0., offset_y, 0. ] }]),
+            wgpu::BufferUsage::COPY_SRC
+        );
+
         let mut encoder = wgpu_states.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: None
         });
+        encoder.copy_buffer_to_buffer(&tmp_buffer, 0, &self.ubo, 0,
+                                      std::mem::size_of::<TriangleUniform>() as wgpu::BufferAddress);
+
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             color_attachments: &[
                 wgpu::RenderPassColorAttachmentDescriptor {
@@ -157,16 +209,14 @@ impl<'a> System<'a> for DrawTriangleSystem {
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_vertex_buffer(0, &self.vbo, 0, 0);
         render_pass.set_index_buffer(&self.ibo, 0, 0);
+        render_pass.set_bind_group(0, &self.bindgroup, &[]);
         render_pass.draw_indexed(0..3, 0, 0..1);
         drop(render_pass);
 
         wgpu_states.queue.submit(&[encoder.finish()]);
-
-        let dt = (*time).get_delta_time();
-        self.elapsed += dt;
         //
         // let uniform = glium::uniform! {
-        //         offset: (0.0, 0.5 * f32::sin(2. * self.elapsed), 0.0)
+        //         offset: (0.0, , 0.0)
         //     };
     }
 }
