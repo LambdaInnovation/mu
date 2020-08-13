@@ -1,4 +1,24 @@
 {
   "fragment": "quad.frag",
-  "vertex": "quad.vert"
+  "vertex": "quad.vert",
+  "uniform_layout": [
+    {
+      "binding": 0,
+      "name": "wvp_matrix",
+      "ty": "Mat4",
+      "visibility": "Vertex"
+    },
+    {
+      "binding": 1,
+      "name": "tex",
+      "ty": "Texture",
+      "visibility": "Fragment"
+    },
+    {
+      "binding": 2,
+      "name": "smp",
+      "ty": "Sampler",
+      "visibility": "Fragment"
+    }
+  ]
 }

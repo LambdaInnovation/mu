@@ -18,7 +18,7 @@ use uuid::Uuid;
 use std::collections::HashMap;
 use shaderc::ShaderKind;
 use std::io::Cursor;
-use wgpu::ShaderStage;
+use wgpu::{ShaderStage, LoadOp, StoreOp};
 
 pub const DEP_CAM_DRAW_SETUP: &str = "cam_draw_setup";
 pub const DEP_CAM_DRAW_TEARDOWN: &str = "cam_draw_teardown";
@@ -36,6 +36,7 @@ pub struct ShaderProgram {
 
 pub struct Texture {
     pub uuid: Uuid,
+    pub size: wgpu::Extent3d,
     pub raw_texture: wgpu::Texture
 }
 
@@ -49,7 +50,28 @@ pub struct CamRenderData {
     pub entity: Entity,
     pub wvp_matrix: Mat4,
     pub world_pos: Vec3,
-    pub encoder: wgpu::CommandEncoder
+    pub encoder: wgpu::CommandEncoder,
+}
+
+impl CamRenderData {
+
+    pub fn render_pass<'a>(&'a mut self, wgpu_state: &'a WgpuState) -> wgpu::RenderPass<'a> {
+        let render_pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            color_attachments: &[
+                wgpu::RenderPassColorAttachmentDescriptor {
+                    attachment: &wgpu_state.frame_texture.as_ref().unwrap().view,
+                    resolve_target: None,
+                    load_op: LoadOp::Load,
+                    store_op: StoreOp::Store,
+                    clear_color: Default::default()
+                }
+            ],
+            depth_stencil_attachment: None
+        });
+
+        render_pass
+    }
+
 }
 
 pub struct FrameRenderData {
@@ -61,7 +83,9 @@ pub enum UniformBindingType {
     Float,
     Vec2,
     Vec3,
-    Texture
+    Mat4,
+    Texture,
+    Sampler
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
@@ -163,7 +187,8 @@ impl ResourcePool<ShaderProgram> {
                         ty: match &x.ty {
                             UniformBindingType::Vec2 |
                             UniformBindingType::Vec3 |
-                            UniformBindingType::Float => wgpu::BindingType::UniformBuffer {
+                            UniformBindingType::Float |
+                            UniformBindingType::Mat4 => wgpu::BindingType::UniformBuffer {
                                 dynamic: false // QUESTION: Do we nee to use dyn offsets?
                             },
                             // TODO: Multi texture dimension / component type
@@ -171,6 +196,9 @@ impl ResourcePool<ShaderProgram> {
                                 dimension: wgpu::TextureViewDimension::D2,
                                 component_type: wgpu::TextureComponentType::Uint,
                                 multisampled: false
+                            },
+                            UniformBindingType::Sampler => wgpu::BindingType::Sampler {
+                                comparison: false
                             }
                         }
                     }
@@ -191,26 +219,71 @@ impl ResourcePool<ShaderProgram> {
 
 }
 
-// FIXME
-// pub fn load_texture(display: &Display, path: &str) -> ResourceRef<Texture> {
-//     let config: TextureConfig = load_asset(path).unwrap();
-//     let img_bytes: Vec<u8> = load_asset_local(&config._path, &config.image).unwrap();
-//     let img = image::load_from_memory_with_format(&img_bytes,
-//                                                   image::ImageFormat::Png).unwrap();
-//     let img_dims = img.dimensions();
-//     create_texture(display, img.into_rgba().into_vec(), img_dims)
-// }
-//
-// pub fn create_texture(display: &Display, rgba_bytes: Vec<u8>, dims: (u32, u32)) -> ResourceRef<Texture> {
-//     let img = RawImage2d::from_raw_rgba(rgba_bytes, dims);
-//     let raw_texture = glium::texture::CompressedSrgbTexture2d::new(display, img).unwrap();
-//
-//     let ret = Texture {
-//         uuid: Uuid::new_v4(),
-//         raw_texture
-//     };
-//     asset::add_local_resource(ret)
-// }
+impl ResourcePool<Texture> {
+
+    pub fn load_texture(&mut self, wgpu_state: &WgpuState, path: &str) -> ResourceRef<Texture> {
+        let config: TextureConfig = load_asset(path).unwrap();
+        let img_bytes: Vec<u8> = load_asset_local(&config._path, &config.image).unwrap();
+        let img = image::load_from_memory_with_format(&img_bytes,
+                                                      image::ImageFormat::Png).unwrap();
+        let img_dims = img.dimensions();
+        self.create_texture(wgpu_state, img.into_rgba().into_vec(), img_dims)
+    }
+
+    pub fn create_texture(&mut self, wgpu_state: &WgpuState, rgba_bytes: Vec<u8>, dims: (u32, u32)) -> ResourceRef<Texture> {
+        let extent = wgpu::Extent3d {
+            width: dims.0,
+            height: dims.1,
+            depth: 1,
+        };
+        let raw_texture = wgpu_state.device.create_texture(&wgpu::TextureDescriptor {
+            size: extent,
+            array_layer_count: 1,
+            mip_level_count: 1, // TODO: mipmap
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST, // TODO: Read/Write
+            label: Some("texture")
+        });
+
+        let buffer = wgpu_state.device.create_buffer_with_data(
+            &rgba_bytes,
+            wgpu::BufferUsage::COPY_SRC
+        );
+
+        let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("texture_upload_encoder")
+        });
+
+        encoder.copy_buffer_to_texture(
+            wgpu::BufferCopyView {
+                buffer: &buffer,
+                offset: 0,
+                bytes_per_row: 4 * dims.0,
+                rows_per_image: dims.1
+            },
+            wgpu::TextureCopyView {
+                texture: &raw_texture,
+                mip_level: 0,
+                array_layer: 0,
+                origin: wgpu::Origin3d::ZERO
+            },
+            extent
+        );
+
+        wgpu_state.queue.submit(&[encoder.finish()]);
+
+        let ret = Texture {
+            uuid: Uuid::new_v4(),
+            raw_texture,
+            size: extent
+        };
+        self.add(ret)
+    }
+
+}
+
 
 pub enum CameraProjection {
     Perspective {
@@ -324,12 +397,11 @@ impl<'a> System<'a> for SysRenderPrepare {
                 _ => (),
             }
 
-
             let cam_render_data = CamRenderData {
                 wvp_matrix,
                 world_pos: trans.pos,
                 encoder,
-                entity: ent
+                entity: ent,
             };
 
             result_vec.push(cam_render_data);

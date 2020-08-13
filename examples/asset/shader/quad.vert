@@ -1,11 +1,13 @@
-#version 330 core
+#version 450
 
-uniform mat4 wvp_matrix;
+layout(set=0,binding=0) uniform Uniforms {
+    mat4 wvp_matrix;
+};
 
-in vec3 position;
-in vec2 uv;
+layout(location=0)      in vec3 position;
+layout(location=1)      in vec2 uv;
 
-out vec2 frag_uv;
+layout(location=0)      out vec2 frag_uv;
 
 void main() {
     gl_Position = wvp_matrix * vec4(position, 1);

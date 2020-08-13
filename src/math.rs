@@ -231,6 +231,15 @@ pub mod mat {
     pub fn perspective(fov: Deg, aspect: Float, z_near: Float, z_far: Float) -> Mat4 {
         cgmath::perspective(fov, aspect, z_near, z_far)
     }
+
+    pub fn to_array(m: Mat4) -> [f32; 16] {
+        [
+            m.x.x, m.x.y, m.x.z, m.x.w,
+            m.y.x, m.y.y, m.y.z, m.y.w,
+            m.z.x, m.z.y, m.z.z, m.z.w,
+            m.w.x, m.w.y, m.w.z, m.w.w,
+        ]
+    }
 }
 
 
