@@ -93,16 +93,7 @@ impl DrawTriangleSystem {
                 wgpu::BufferUsage::INDEX
             );
 
-            let uniform_layout = wgpu_states.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                bindings: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::UniformBuffer {
-                        dynamic: false
-                    }
-                }],
-                label: None
-            });
+            let program = program_pool.get(&program_ref);
 
             let ubo = wgpu_states.device.create_buffer_with_data(
                 bytemuck::cast_slice(&[TriangleUniform { offset: [0., 0., 0.] }]),
@@ -110,7 +101,7 @@ impl DrawTriangleSystem {
             );
 
             let uniform_bindgroup = wgpu_states.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &uniform_layout,
+                layout: &program.bind_group_layout,
                 bindings: &[
                     wgpu::Binding {
                         binding: 0,
@@ -124,10 +115,8 @@ impl DrawTriangleSystem {
             });
 
             let render_pipeline_layout = wgpu_states.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                bind_group_layouts: &[&uniform_layout],
+                bind_group_layouts: &[&program.bind_group_layout],
             });
-
-            let program = program_pool.get(&program_ref);
 
             let pipeline = wgpu_states.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 layout: &render_pipeline_layout,

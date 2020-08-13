@@ -1,4 +1,12 @@
 {
   "vertex": "triangle.vert",
-  "fragment": "triangle.frag"
+  "fragment": "triangle.frag",
+  "uniform_layout": [
+    {
+      "binding": 0,
+      "name": "offset",
+      "ty": "Vec3",
+      "visibility": "Vertex"
+    }
+  ]
 }

@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use image::GenericImageView;
-use serde::Deserialize;
+use serde::{Serialize, Deserialize};
 use serde_json;
 use specs::prelude::*;
 
@@ -18,6 +18,7 @@ use uuid::Uuid;
 use std::collections::HashMap;
 use shaderc::ShaderKind;
 use std::io::Cursor;
+use wgpu::ShaderStage;
 
 pub const DEP_CAM_DRAW_SETUP: &str = "cam_draw_setup";
 pub const DEP_CAM_DRAW_TEARDOWN: &str = "cam_draw_teardown";
@@ -28,7 +29,9 @@ pub type UniformMat3 = [[f32; 3]; 3];
 pub struct ShaderProgram {
     pub vertex: wgpu::ShaderModule,
     pub fragment: wgpu::ShaderModule,
-    // bind groups
+    pub name_to_set_mapping: HashMap<String, u32>,
+    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub layout_config: Vec<UniformLayoutConfig>
 }
 
 pub struct Texture {
@@ -53,15 +56,39 @@ pub struct FrameRenderData {
     pub camera_infos: Vec<CamRenderData>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
+pub enum UniformBindingType {
+    Float,
+    Vec2,
+    Vec3,
+    Texture
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+pub enum UniformBindingVisibility {
+    Vertex,
+    Fragment,
+    All
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UniformLayoutConfig {
+    pub binding: u32,
+    pub name: String,
+    pub ty: UniformBindingType,
+    pub visibility: UniformBindingVisibility
+}
+
+#[derive(Serialize, Deserialize)]
 struct ShaderConfig {
     vertex: String,
     fragment: String,
+    uniform_layout: Vec<UniformLayoutConfig>,
     #[serde(skip)]
     _path: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct TextureConfig {
     image: String,
     #[serde(skip)]
@@ -94,11 +121,13 @@ impl ResourcePool<ShaderProgram> {
         let config: ShaderConfig = load_asset(path).unwrap();
         let vert: String = crate::asset::load_asset_local(&config._path, &config.vertex).unwrap();
         let frag: String = crate::asset::load_asset_local(&config._path, &config.fragment).unwrap();
-        self.load_by_content(device, &vert, &frag, &config.vertex, &config.fragment)
+        self.load_by_content(device, &vert, &frag, &config.vertex, &config.fragment,
+                             &config.uniform_layout)
     }
 
     pub fn load_by_content(&mut self, device: &wgpu::Device, vertex: &str, fragment: &str,
-                       vert_filename: &str, frag_filename: &str) -> ResourceRef<ShaderProgram> {
+                       vert_filename: &str, frag_filename: &str, uniform_layout: &[UniformLayoutConfig])
+        -> ResourceRef<ShaderProgram> {
 
         let mut compiler = shaderc::Compiler::new()
             .expect("Can't create shader compiler");
@@ -114,9 +143,47 @@ impl ResourcePool<ShaderProgram> {
         let vs_module = device.create_shader_module(&vs_data);
         let fs_module = device.create_shader_module(&fs_data);
 
+        let mut mapping = HashMap::new();
+        for binding in uniform_layout {
+            mapping.insert(binding.name.clone(), binding.binding);
+        }
+
+        let label = format!("{}:{}", vert_filename, frag_filename);
+        let descriptor = wgpu::BindGroupLayoutDescriptor {
+            label: Some(&label), // TODO: Better label
+            bindings: &uniform_layout.iter()
+                .map(|x| {
+                    wgpu::BindGroupLayoutEntry {
+                        binding: x.binding,
+                        visibility: match &x.visibility {
+                            UniformBindingVisibility::Fragment => wgpu::ShaderStage::FRAGMENT,
+                            UniformBindingVisibility::Vertex => wgpu::ShaderStage::VERTEX,
+                            UniformBindingVisibility::All => wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT
+                        },
+                        ty: match &x.ty {
+                            UniformBindingType::Vec2 |
+                            UniformBindingType::Vec3 |
+                            UniformBindingType::Float => wgpu::BindingType::UniformBuffer {
+                                dynamic: false // QUESTION: Do we nee to use dyn offsets?
+                            },
+                            // TODO: Multi texture dimension / component type
+                            UniformBindingType::Texture => wgpu::BindingType::SampledTexture {
+                                dimension: wgpu::TextureViewDimension::D2,
+                                component_type: wgpu::TextureComponentType::Uint,
+                                multisampled: false
+                            }
+                        }
+                    }
+                })
+                .collect::<Vec<_>>(),
+        };
+
         let shader_program = ShaderProgram {
             vertex: vs_module,
-            fragment: fs_module
+            fragment: fs_module,
+            name_to_set_mapping: mapping,
+            bind_group_layout: device.create_bind_group_layout(&descriptor),
+            layout_config: uniform_layout.iter().map(|x| x.clone()).collect()
         };
 
         self.add(shader_program)
