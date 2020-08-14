@@ -3,7 +3,6 @@ use mu::client::graphics::*;
 use specs::System;
 use specs::{ReadExpect};
 use mu::ecs::Time;
-use mu::asset::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 use mu::client::graphics;
@@ -55,7 +54,7 @@ struct DrawTriangleSystem {
 
 impl DrawTriangleSystem {
 
-    fn new(res_mgr: &mut ResManager, wgpu_states_ref: Rc<RefCell<WgpuState>>) -> Self {
+    fn new(wgpu_states_ref: Rc<RefCell<WgpuState>>) -> Self {
         let program = {
             let wgpu_states = wgpu_states_ref.borrow();
             load_shader(&wgpu_states.device, "shader/triangle.shader.json")
@@ -210,7 +209,7 @@ impl mu::Module for TriangleModule {
                                             .after(&[graphics::DEP_CAM_DRAW_SETUP])
                                             .before(&[graphics::DEP_CAM_DRAW_TEARDOWN]),
             move |init_data, insert| {
-                let sys = DrawTriangleSystem::new(&mut init_data.res_mgr, init_data.wgpu_state.clone());
+                let sys = DrawTriangleSystem::new(init_data.wgpu_state.clone());
                 insert.insert_thread_local(sys);
             })
     }

@@ -4,8 +4,13 @@
   "uniform_layout": [
     {
       "binding": 0,
-      "name": "offset",
-      "ty": "Vec3",
+      "ty": {
+        "DataBlock":  {
+          "members": [
+            ["pos", "Vec3"]
+          ]
+        }
+      },
       "visibility": "Vertex"
     }
   ]

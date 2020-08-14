@@ -8,7 +8,7 @@ use winit::{
 };
 use specs::prelude::*;
 
-use crate::asset::ResManager;
+use crate::resource::ResManager;
 use crate::client::input::RawInputData;
 use crate::client::WindowInfo;
 use crate::ecs::{Time, HasParent};
@@ -24,6 +24,7 @@ pub use wgpu;
 pub use specs;
 
 pub mod asset;
+pub mod resource;
 pub mod ecs;
 pub mod math;
 pub mod util;
@@ -587,7 +588,7 @@ impl Runtime {
         }
 
         // 帧末释放所有资源
-        asset::cleanup_local_resources();
+        resource::cleanup_local_resources();
         world.write_resource::<ResManager>().cleanup();
     }
 

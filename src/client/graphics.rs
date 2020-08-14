@@ -7,6 +7,7 @@ use specs::prelude::*;
 
 use crate::{WgpuState};
 use crate::asset::*;
+use crate::resource::*;
 use crate::client::WindowInfo;
 use crate::ecs::Transform;
 use crate::math::{Mat4, Vec3, Vec2};
@@ -293,6 +294,12 @@ pub enum UniformPropertyType {
     Float, Vec2, Vec3, Mat4
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UniformPropertyBinding (
+    String,
+    UniformPropertyType
+);
+
 pub enum UniformProperty {
     Float(f32),
     Vec2(Vec2),
@@ -304,7 +311,7 @@ pub enum UniformProperty {
 pub enum UniformBindingType {
     Texture,
     Sampler,
-    DataBlock { members: Vec<UniformPropertyType> }
+    DataBlock { members: Vec<UniformPropertyBinding> }
 }
 
 pub enum UniformBinding {
@@ -325,6 +332,7 @@ pub enum UniformVisibility {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct UniformLayoutConfig {
     pub binding: u32,
+    #[serde(default)]
     pub name: String,
     pub ty: UniformBindingType,
     pub visibility: UniformVisibility
