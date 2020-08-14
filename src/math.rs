@@ -192,13 +192,13 @@ pub mod mat3 {
         )
     }
 
-    pub fn rotate_around(p: Vec2, angle: Deg) -> Mat3 {
-        unimplemented!();
-    }
-
-    pub fn scale_around(p: Vec2, scl: Vec2) -> Mat3 {
-        unimplemented!();
-    }
+    // pub fn rotate_around(p: Vec2, angle: Deg) -> Mat3 {
+    //     unimplemented!();
+    // }
+    //
+    // pub fn scale_around(p: Vec2, scl: Vec2) -> Mat3 {
+    //     unimplemented!();
+    // }
 
     pub fn scale(scl: Vec2) -> Mat3 {
         let c0r0 = scl.x;

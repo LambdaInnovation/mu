@@ -1,20 +1,17 @@
 use mu::*;
 use mu::client::graphics::*;
-use mu::client;
 use specs::System;
 use specs::{ReadExpect};
 use mu::ecs::Time;
-use mu::asset::{ResourceRef, ResManager, ResourceManager};
-use mu::asset;
+use mu::asset::*;
 use std::cell::RefCell;
 use std::rc::Rc;
-use wgpu::BufferUsage;
 use mu::client::graphics;
 use mu::util::Color;
 
 #[derive(Copy, Clone)]
 struct TriangleVertex {
-    position: [f32; 3]
+    pub position: [f32; 3]
 }
 
 impl TriangleVertex {
@@ -41,7 +38,7 @@ unsafe impl bytemuck::Zeroable for TriangleVertex {}
 
 #[derive(Copy, Clone)]
 struct TriangleUniform {
-    offset: [f32; 3]
+    pub offset: [f32; 3]
 }
 unsafe impl bytemuck::Pod for TriangleUniform {}
 unsafe impl bytemuck::Zeroable for TriangleUniform {}
@@ -160,9 +157,9 @@ impl DrawTriangleSystem {
 }
 
 impl<'a> System<'a> for DrawTriangleSystem {
-    type SystemData = (ReadExpect<'a, Time>);
+    type SystemData = ReadExpect<'a, Time>;
 
-    fn run(&mut self, (time): Self::SystemData) {
+    fn run(&mut self, time: Self::SystemData) {
         let wgpu_states = self.wgpu_states.borrow();
 
         let dt = (*time).get_delta_time();
@@ -215,7 +212,7 @@ impl mu::Module for TriangleModule {
         init_data.dispatch_thread_local(InsertInfo::new("triangle")
                                             .after(&[graphics::DEP_CAM_DRAW_SETUP])
                                             .before(&[graphics::DEP_CAM_DRAW_TEARDOWN]),
-            move |init_data, mut insert| {
+            move |init_data, insert| {
                 let sys = DrawTriangleSystem::new(&mut init_data.res_mgr, init_data.wgpu_state.clone());
                 insert.insert_thread_local(sys);
             })

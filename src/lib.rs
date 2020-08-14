@@ -447,7 +447,7 @@ impl WgpuState {
             present_mode: wgpu::PresentMode::Fifo
         };
 
-        let mut swap_chain = device.create_swap_chain(&surface, &sc_desc);
+        let swap_chain = device.create_swap_chain(&surface, &sc_desc);
         Self {
             surface,
             adapter,

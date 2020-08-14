@@ -6,8 +6,8 @@ use serde::{Serialize, Deserialize};
 use serde_json;
 use specs::prelude::*;
 
-use crate::{asset, WgpuState};
-use crate::asset::{load_asset, load_asset_local, LoadableAsset, ResourceRef, LocalResManager, ResourcePool};
+use crate::{WgpuState};
+use crate::asset::*;
 use crate::client::WindowInfo;
 use crate::ecs::Transform;
 use crate::math::{Mat4, Vec3, Vec2};
@@ -18,7 +18,6 @@ use uuid::Uuid;
 use std::collections::HashMap;
 use shaderc::ShaderKind;
 use std::io::Cursor;
-use wgpu::{ShaderStage, LoadOp, StoreOp};
 
 pub const DEP_CAM_DRAW_SETUP: &str = "cam_draw_setup";
 pub const DEP_CAM_DRAW_TEARDOWN: &str = "cam_draw_teardown";
@@ -60,8 +59,8 @@ impl CamRenderData {
                 wgpu::RenderPassColorAttachmentDescriptor {
                     attachment: &wgpu_state.frame_texture.as_ref().unwrap().view,
                     resolve_target: None,
-                    load_op: LoadOp::Load,
-                    store_op: StoreOp::Store,
+                    load_op: wgpu::LoadOp::Load,
+                    store_op: wgpu::StoreOp::Store,
                     clear_color: Default::default()
                 }
             ],
