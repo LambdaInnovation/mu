@@ -10,7 +10,7 @@ use crate::{asset, WgpuState};
 use crate::asset::{load_asset, load_asset_local, LoadableAsset, ResourceRef, LocalResManager, ResourcePool};
 use crate::client::WindowInfo;
 use crate::ecs::Transform;
-use crate::math::{Mat4, Vec3};
+use crate::math::{Mat4, Vec3, Vec2};
 use crate::math;
 use crate::Module;
 use crate::util::Color;
@@ -29,7 +29,6 @@ pub type UniformMat3 = [[f32; 3]; 3];
 pub struct ShaderProgram {
     pub vertex: wgpu::ShaderModule,
     pub fragment: wgpu::ShaderModule,
-    pub name_to_set_mapping: HashMap<String, u32>,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub layout_config: Vec<UniformLayoutConfig>
 }
@@ -79,17 +78,34 @@ pub struct FrameRenderData {
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
+pub enum UniformPropertyType {
+    Float, Vec2, Vec3, Mat4
+}
+
+pub enum UniformProperty {
+    Float(f32),
+    Vec2(Vec2),
+    Vec3(Vec3),
+    Mat4(Mat4)
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub enum UniformBindingType {
-    Float,
-    Vec2,
-    Vec3,
-    Mat4,
     Texture,
-    Sampler
+    Sampler,
+    DataBlock { members: Vec<UniformPropertyType> }
+}
+
+pub enum UniformBinding {
+    Texture(ResourceRef<Texture>),
+    Sampler(ResourceRef<wgpu::Sampler>),
+    DataBlock {
+        members: Vec<UniformProperty>
+    }
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
-pub enum UniformBindingVisibility {
+pub enum UniformVisibility {
     Vertex,
     Fragment,
     All
@@ -100,7 +116,7 @@ pub struct UniformLayoutConfig {
     pub binding: u32,
     pub name: String,
     pub ty: UniformBindingType,
-    pub visibility: UniformBindingVisibility
+    pub visibility: UniformVisibility
 }
 
 #[derive(Serialize, Deserialize)]
@@ -167,11 +183,6 @@ impl ResourcePool<ShaderProgram> {
         let vs_module = device.create_shader_module(&vs_data);
         let fs_module = device.create_shader_module(&fs_data);
 
-        let mut mapping = HashMap::new();
-        for binding in uniform_layout {
-            mapping.insert(binding.name.clone(), binding.binding);
-        }
-
         let label = format!("{}:{}", vert_filename, frag_filename);
         let descriptor = wgpu::BindGroupLayoutDescriptor {
             label: Some(&label), // TODO: Better label
@@ -180,18 +191,14 @@ impl ResourcePool<ShaderProgram> {
                     wgpu::BindGroupLayoutEntry {
                         binding: x.binding,
                         visibility: match &x.visibility {
-                            UniformBindingVisibility::Fragment => wgpu::ShaderStage::FRAGMENT,
-                            UniformBindingVisibility::Vertex => wgpu::ShaderStage::VERTEX,
-                            UniformBindingVisibility::All => wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT
+                            UniformVisibility::Fragment => wgpu::ShaderStage::FRAGMENT,
+                            UniformVisibility::Vertex => wgpu::ShaderStage::VERTEX,
+                            UniformVisibility::All => wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT
                         },
                         ty: match &x.ty {
-                            UniformBindingType::Vec2 |
-                            UniformBindingType::Vec3 |
-                            UniformBindingType::Float |
-                            UniformBindingType::Mat4 => wgpu::BindingType::UniformBuffer {
-                                dynamic: false // QUESTION: Do we nee to use dyn offsets?
+                            UniformBindingType::DataBlock { .. } => wgpu::BindingType::UniformBuffer {
+                                dynamic: false
                             },
-                            // TODO: Multi texture dimension / component type
                             UniformBindingType::Texture => wgpu::BindingType::SampledTexture {
                                 dimension: wgpu::TextureViewDimension::D2,
                                 component_type: wgpu::TextureComponentType::Uint,
@@ -199,7 +206,7 @@ impl ResourcePool<ShaderProgram> {
                             },
                             UniformBindingType::Sampler => wgpu::BindingType::Sampler {
                                 comparison: false
-                            }
+                            },
                         }
                     }
                 })
@@ -209,7 +216,6 @@ impl ResourcePool<ShaderProgram> {
         let shader_program = ShaderProgram {
             vertex: vs_module,
             fragment: fs_module,
-            name_to_set_mapping: mapping,
             bind_group_layout: device.create_bind_group_layout(&descriptor),
             layout_config: uniform_layout.iter().map(|x| x.clone()).collect()
         };

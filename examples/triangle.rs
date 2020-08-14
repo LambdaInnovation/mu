@@ -48,7 +48,6 @@ unsafe impl bytemuck::Zeroable for TriangleUniform {}
 
 struct DrawTriangleSystem {
     wgpu_states: WgpuStateCell,
-    program: ResourceRef<ShaderProgram>,
     vbo: wgpu::Buffer,
     ibo: wgpu::Buffer,
     ubo: wgpu::Buffer,
@@ -149,7 +148,6 @@ impl DrawTriangleSystem {
 
         Self {
             wgpu_states: wgpu_states_ref,
-            program: program_ref,
             vbo,
             ibo,
             ubo,

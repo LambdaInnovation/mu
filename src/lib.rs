@@ -1,6 +1,3 @@
-#[macro_use]
-pub extern crate log;
-
 use std::rc::Rc;
 
 use winit::{
@@ -21,8 +18,9 @@ use std::cell::RefCell;
 
 pub type WindowEventLoop = event_loop::EventLoop<()>;
 
+#[macro_use]
+pub extern crate log;
 pub use wgpu;
-pub use log;
 pub use specs;
 
 pub mod asset;

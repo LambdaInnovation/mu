@@ -4,8 +4,12 @@
   "uniform_layout": [
     {
       "binding": 0,
-      "name": "wvp_matrix",
-      "ty": "Mat4",
+      "name": "vertex_uniforms",
+      "ty": {
+        "DataBlock": {
+          "members": ["Mat4"]
+        }
+      },
       "visibility": "Vertex"
     },
     {
