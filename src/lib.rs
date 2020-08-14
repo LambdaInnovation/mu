@@ -1,7 +1,5 @@
 #[macro_use]
 pub extern crate log;
-extern crate serde;
-extern crate specs;
 
 use std::rc::Rc;
 
@@ -11,9 +9,6 @@ use winit::{
     event_loop::ControlFlow,
     window::{Window, WindowBuilder}
 };
-// use glutin;
-// use glutin::event;
-// use glutin::event_loop::ControlFlow;
 use specs::prelude::*;
 
 use crate::asset::ResManager;
@@ -25,6 +20,10 @@ use specs_hierarchy::HierarchySystem;
 use std::cell::RefCell;
 
 pub type WindowEventLoop = event_loop::EventLoop<()>;
+
+pub use wgpu;
+pub use log;
+pub use specs;
 
 pub mod asset;
 pub mod ecs;
@@ -601,14 +600,9 @@ impl Runtime {
 pub fn common_init() {
     assert_eq!(COMMON_INITIALIZED.load(Ordering::SeqCst), false, "Can't common_init twice");
     env_logger::Builder::new()
+        // TODO: use env variable, or other more flexible rule
         .parse_filters("info,gfx_backend_vulkan=warn,wgpu_core=warn")
         .init();
-    // CombinedLogger::init(
-    //     vec![
-    //         TermLogger::new(LevelFilter::Info, Config::default(), TerminalMode::Mixed),
-    //         // WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
-    //     ]
-    // ).unwrap();
     COMMON_INITIALIZED.store(true, Ordering::SeqCst);
 }
 

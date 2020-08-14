@@ -141,7 +141,12 @@ impl DrawQuadSystem {
             fragment_stage: Some(wgpu::ProgrammableStageDescriptor { module: &program.fragment, entry_point: "main" }),
             rasterization_state: None,
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[],
+            color_states: &[wgpu::ColorStateDescriptor {
+                format: wgpu_state.sc_desc.format,
+                alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                color_blend: wgpu::BlendDescriptor::REPLACE,
+                write_mask: wgpu::ColorWrite::ALL
+            }],
             depth_stencil_state: None,
             vertex_state: wgpu::VertexStateDescriptor {
                 index_format: wgpu::IndexFormat::Uint16,
@@ -213,8 +218,8 @@ impl<'a> System<'a> for UpdateCameraSystem {
 
     fn run(&mut self, (input, time, mut trans_vec): Self::SystemData) {
         let dt = (&time).get_delta_time();
-        let x_axis = Self::_map_axis(&input, VirtualKeyCode::Right, VirtualKeyCode::Left);
-        let y_axis = Self::_map_axis(&input, VirtualKeyCode::Up, VirtualKeyCode::Down);
+        let x_axis = Self::_map_axis(&input, VirtualKeyCode::D, VirtualKeyCode::A);
+        let y_axis = Self::_map_axis(&input, VirtualKeyCode::W, VirtualKeyCode::S);
 
         for item in (&mut trans_vec).join() {
             item.pos.x += x_axis * dt;
@@ -256,7 +261,7 @@ impl Module for QuadModule {
 fn main() {
     mu::asset::set_base_asset_path("./examples/asset");
 
-    let runtime = RuntimeBuilder::new("Textured Quad")
+    let runtime = RuntimeBuilder::new("Textured Quad (WASD to move camera)")
         .add_game_module(GraphicsModule)
         .add_game_module(QuadModule)
         .build();
