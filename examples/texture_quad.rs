@@ -1,6 +1,6 @@
 use mu;
 use mu::math;
-use mu::{RuntimeBuilder, Module, InitData, InsertInfo, WgpuStateCell, InitContext, StartContext};
+use mu::{RuntimeBuilder, Module, InsertInfo, WgpuStateCell, InitContext, StartContext};
 use mu::client::graphics::*;
 use specs::prelude::*;
 use mu::ecs::{Transform, Time};
@@ -8,14 +8,12 @@ use mu::client::graphics::CameraProjection::Orthographic;
 use mu::util::Color;
 use mu::client::input::RawInputData;
 use winit::event::VirtualKeyCode;
-use mu::asset;
-use mu::asset::{ResourceRef, ResManager};
 use wgpu::BufferAddress;
 
 #[derive(Copy, Clone)]
 struct QuadVertex {
-    position: [f32; 3],
-    uv: [f32; 2]
+    pub position: [f32; 3],
+    pub uv: [f32; 2]
 }
 
 unsafe impl bytemuck::Pod for QuadVertex {}
@@ -52,37 +50,26 @@ impl QuadVertex {
 
 struct DrawQuadSystem {
     wgpu_state: WgpuStateCell,
-    program: ResourceRef<ShaderProgram>,
     vbo: wgpu::Buffer,
     ibo: wgpu::Buffer,
     ubo: wgpu::Buffer,
-    tex: ResourceRef<Texture>,
     bind_group: wgpu::BindGroup,
     pipeline: wgpu::RenderPipeline
 }
 
 impl DrawQuadSystem {
 
-    fn new(res_mgr: &mut ResManager, wgpu_states_cell: WgpuStateCell) -> Self {
+    fn new(wgpu_states_cell: WgpuStateCell) -> Self {
         let wgpu_state = wgpu_states_cell.borrow();
-        let program_ref = {
-            let mut program_pool = res_mgr.get_pool_mut::<ShaderProgram>();
-            program_pool.load(&wgpu_state.device, "shader/quad.shader.json")
-        };
+        let program = load_shader(&wgpu_state.device, "shader/quad.shader.json");
+        let texture = load_texture(&*wgpu_state, "texture/landscape.tex.json");
 
-        let texture_ref = {
-            let mut texture_pool = res_mgr.get_pool_mut::<Texture>();
-            texture_pool.load_texture(&*wgpu_state, "texture/landscape.tex.json")
-        };
-
-        let program = res_mgr.get(&program_ref);
         let quad = vec![
             QuadVertex::new(-0.5, 0.5, 0., 0.),
             QuadVertex::new(-0.5, -0.5, 0., 1.),
             QuadVertex::new(0.5, -0.5, 1., 1.),
             QuadVertex::new(0.5, 0.5, 1., 0.)
         ];
-        let texture = res_mgr.get(&texture_ref);
 
         let texture_view = texture.raw_texture.create_default_view();
         let sampler = wgpu_state.device.create_sampler(&wgpu::SamplerDescriptor {
@@ -160,8 +147,6 @@ impl DrawQuadSystem {
         drop(wgpu_state);
         Self {
             wgpu_state: wgpu_states_cell,
-            program: program_ref,
-            tex: texture_ref,
             vbo,
             ibo,
             ubo,
@@ -244,7 +229,7 @@ impl Module for QuadModule {
         init_data.dispatch_thread_local(
             insert_info,
             move |init, i|
-                i.insert_thread_local(DrawQuadSystem::new(&mut init.res_mgr, init.wgpu_state.clone())));
+                i.insert_thread_local(DrawQuadSystem::new(init.wgpu_state.clone())));
     }
 
     fn start(&self, start_data: &mut StartContext) {

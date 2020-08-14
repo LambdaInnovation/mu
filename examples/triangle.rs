@@ -56,10 +56,9 @@ struct DrawTriangleSystem {
 impl DrawTriangleSystem {
 
     fn new(res_mgr: &mut ResManager, wgpu_states_ref: Rc<RefCell<WgpuState>>) -> Self {
-        let program_pool = res_mgr.get_pool_mut::<ShaderProgram>();
-        let program_ref = {
+        let program = {
             let wgpu_states = wgpu_states_ref.borrow();
-            program_pool.load(&wgpu_states.device, "shader/triangle.shader.json")
+            load_shader(&wgpu_states.device, "shader/triangle.shader.json")
         };
 
         let triangle = {
@@ -88,8 +87,6 @@ impl DrawTriangleSystem {
                 bytemuck::cast_slice(&indices),
                 wgpu::BufferUsage::INDEX
             );
-
-            let program = program_pool.get(&program_ref);
 
             let ubo = wgpu_states.device.create_buffer_with_data(
                 bytemuck::cast_slice(&[TriangleUniform { offset: [0., 0., 0.] }]),
