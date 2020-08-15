@@ -22,6 +22,7 @@ pub type WindowEventLoop = event_loop::EventLoop<()>;
 pub extern crate log;
 pub use wgpu;
 pub use specs;
+use crate::util::Color;
 
 pub mod asset;
 pub mod resource;
@@ -566,6 +567,24 @@ impl Runtime {
         {
             let mut wgpu_state = wgpu_state_ref.borrow_mut();
             wgpu_state.frame_texture = Some(wgpu_state.swap_chain.get_next_texture().unwrap());
+
+            let mut encoder = wgpu_states.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: None
+            });
+
+            // works around https://github.com/gfx-rs/wgpu-rs/issues/507 by always clearing the texture.
+            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                color_attachments: &[
+                    wgpu::RenderPassColorAttachmentDescriptor {
+                        attachment: &wgpu_states.frame_texture.as_ref().unwrap().view,
+                        resolve_target: None,
+                        load_op: wgpu::LoadOp::Clear,
+                        store_op: wgpu::StoreOp::Store,
+                        clear_color: Color::rgb(0.0, 0.0, 0.0).into()
+                    }
+                ],
+                depth_stencil_attachment: None
+            });
         }
 
         dispatcher.dispatch(world);
