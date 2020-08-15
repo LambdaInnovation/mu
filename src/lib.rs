@@ -432,7 +432,7 @@ impl WgpuState {
         let surface = wgpu::Surface::create(window);
         let adapter = wgpu::Adapter::request(
             &wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::Default,
+                power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface)
             },
             wgpu::BackendBit::PRIMARY
@@ -568,7 +568,7 @@ impl Runtime {
             let mut wgpu_state = wgpu_state_ref.borrow_mut();
             wgpu_state.frame_texture = Some(wgpu_state.swap_chain.get_next_texture().unwrap());
 
-            let mut encoder = wgpu_states.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: None
             });
 
@@ -576,7 +576,7 @@ impl Runtime {
             encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[
                     wgpu::RenderPassColorAttachmentDescriptor {
-                        attachment: &wgpu_states.frame_texture.as_ref().unwrap().view,
+                        attachment: &wgpu_state.frame_texture.as_ref().unwrap().view,
                         resolve_target: None,
                         load_op: wgpu::LoadOp::Clear,
                         store_op: wgpu::StoreOp::Store,
@@ -585,6 +585,8 @@ impl Runtime {
                 ],
                 depth_stencil_attachment: None
             });
+
+            wgpu_state.queue.submit(&[encoder.finish()]);
         }
 
         dispatcher.dispatch(world);
