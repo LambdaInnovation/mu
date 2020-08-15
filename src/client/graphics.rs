@@ -18,6 +18,7 @@ use uuid::Uuid;
 use std::collections::HashMap;
 use shaderc::ShaderKind;
 use std::io::Cursor;
+use wgpu::BindGroupDescriptor;
 
 pub const DEP_CAM_DRAW_SETUP: &str = "cam_draw_setup";
 pub const DEP_CAM_DRAW_TEARDOWN: &str = "cam_draw_teardown";
@@ -222,7 +223,8 @@ impl LoadableAsset for TextureConfig {
 pub struct Texture {
     pub uuid: Uuid,
     pub size: wgpu::Extent3d,
-    pub raw_texture: wgpu::Texture
+    pub raw_texture: wgpu::Texture,
+    pub default_view: wgpu::TextureView
 }
 
 pub fn load_texture(wgpu_state: &WgpuState, path: &str) -> Texture {
@@ -278,10 +280,13 @@ pub fn create_texture(wgpu_state: &WgpuState, rgba_bytes: Vec<u8>, dims: (u32, u
 
     wgpu_state.queue.submit(&[encoder.finish()]);
 
+    let default_view = raw_texture.create_default_view();
+
     let ret = Texture {
         uuid: Uuid::new_v4(),
         raw_texture,
-        size: extent
+        size: extent,
+        default_view
     };
     ret
 }
@@ -307,19 +312,25 @@ pub enum UniformProperty {
     Mat4(Mat4)
 }
 
+impl UniformPropertyType {
+
+    #[inline]
+    fn element_count(&self) -> usize {
+        match &self {
+            Self::Float => 1,
+            Self::Vec2 => 2,
+            Self::Vec3 => 3,
+            Self::Mat4 => 16
+        }
+    }
+
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub enum UniformBindingType {
     Texture,
     Sampler,
     DataBlock { members: Vec<UniformPropertyBinding> }
-}
-
-pub enum UniformBinding {
-    Texture(ResourceRef<Texture>),
-    Sampler(ResourceRef<wgpu::Sampler>),
-    DataBlock {
-        members: Vec<UniformProperty>
-    }
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
@@ -341,49 +352,201 @@ pub struct UniformLayoutConfig {
 #[derive(Clone)]
 pub enum MatProperty {
     Float(f32),
-    Mat4([[f32; 4]; 4]),
-    Sampler(ResourceRef<Texture>)
+    Vec2(Vec2),
+    Vec3(Vec3),
+    Mat4(Mat4),
+    Texture(ResourceRef<Texture>),
+    Sampler(ResourceRef<wgpu::Sampler>)
 }
 
-#[derive(Clone)]
 pub struct Material {
     pub program: ResourceRef<ShaderProgram>,
-    pub uniforms: HashMap<String, MatProperty>
+    pub properties: HashMap<String, MatProperty>,
+    bind_group: wgpu::BindGroup,
+    dirty: bool
 }
 
 impl Material {
 
-    // pub fn as_uniforms<'a>(&self, res_mgr: &'a LocalResManager) -> MaterialUniforms<'a> {
-    //     let properties: HashMap<_, _> = self.uniforms.iter()
-    //         .map(|(k, v)| {
-    //             let uniform_value = match v {
-    //                 MatProperty::Float(f) => UniformValue::Float(f.clone()),
-    //                 MatProperty::Mat4(m) => UniformValue::Mat4(m.clone()),
-    //                 MatProperty::Sampler(s) =>
-    //                     UniformValue::CompressedSrgbTexture2d(&res_mgr.get(s).raw_texture, None)
-    //             };
-    //             (k.clone(), uniform_value)
-    //         })
-    //         .collect();
-    //
-    //     MaterialUniforms {
-    //         properties
-    //     }
-    // }
+    pub fn get_bind_group(&mut self, res_mgr: &ResManager, device: &wgpu::Device) -> &wgpu::BindGroup {
+        if self.dirty {
+            let program = res_mgr.get(&self.program);
+            self.bind_group = Self::create_bind_group(res_mgr, program, device, &self.properties);
+            self.dirty = false;
+        }
+
+        &self.bind_group
+    }
+
+    pub fn set(&mut self, name: String, p: MatProperty) {
+        assert!(self.properties.contains_key(&name), "Can't add non-existent property");
+        self.properties.insert(name, p);
+    }
+
+    fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    fn create_bind_group<'a>(
+        res_mgr: &'a ResManager,
+        program: &ShaderProgram,
+        device: &wgpu::Device,
+        dict: &'a HashMap<String, MatProperty>) -> wgpu::BindGroup {
+        let layout = &program.layout_config;
+
+        enum FillEntry<'a> {
+            DataBlock(u32, Vec<f32>, u32, Option<wgpu::Buffer>),
+            Property(u32, Option<&'a MatProperty>),
+        }
+
+        enum FillKey {
+            DataBlock(u32, usize, usize, usize), // index, property index, float offset
+            Property(u32, usize)
+        }
+
+        let mut mapping: HashMap<String, FillKey> = HashMap::new();
+        for (idx, elem) in layout.iter().enumerate() {
+            match &elem.ty {
+                UniformBindingType::Sampler | UniformBindingType::Texture => {
+                    if elem.name.len() > 0 {
+                        mapping.insert(elem.name.clone(), FillKey::Property(elem.binding, idx));
+                    }
+                },
+                UniformBindingType::DataBlock { members } => {
+                    assert_eq!(elem.name.len(), 0, "DataBlock name is useless: {}", elem.name);
+                    let mut sum = 0;
+                    for (idx2, mem) in members.iter().enumerate() {
+                        if elem.name.len() > 0 {
+                            mapping.insert(elem.name.clone(), FillKey::DataBlock(elem.binding, idx, idx2, sum));
+                        }
+                        sum += mem.1.element_count();
+                    }
+                }
+            }
+        }
+
+        let mut buffer_vec: Vec<wgpu::Buffer> = vec![];
+        let mut data_vec = layout
+            .iter()
+            .map(|layout| {
+                match &layout.ty {
+                    UniformBindingType::Sampler | UniformBindingType::Texture => FillEntry::Property(layout.binding, None),
+                    UniformBindingType::DataBlock { members } => {
+                        let floats= vec![0.0;
+                                         members.iter().map(|x| x.1.element_count()).sum()];
+                        FillEntry::DataBlock(layout.binding, floats, 0, None)
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+
+        for (k, v) in dict {
+            let fill_key = mapping.get(k)
+                .expect(&format!("No property named {} specified in config", &k));
+
+            match fill_key {
+                FillKey::Property(binding, idx) => {
+                    if let FillEntry::Property(_, p) = &mut data_vec[*idx] {
+                        *p = Some(v);
+                    } else {
+                        panic!("Invalid property type for {}", k);
+                    }
+                },
+                FillKey::DataBlock(binding, ix, ix2, offset) => {
+                    if let FillEntry::DataBlock(_, floats, flags, _) = &mut data_vec[*ix] {
+                        *flags = *flags | (1 << ix2);
+
+                        let slice = &mut floats.as_mut_slice()[*offset..];
+                        match v {
+                            MatProperty::Float(f) => slice[0] = *f,
+                            MatProperty::Vec2(v) => {
+                                slice[0] = v.x;
+                                slice[1] = v.y;
+                            },
+                            MatProperty::Vec3(v) => {
+                                slice[0] = v.x;
+                                slice[1] = v.y;
+                            },
+                            MatProperty::Mat4(v) => {
+                                let arr: [f32; 16] = math::mat::to_array(*v);
+                                for i in 0..16 {
+                                    slice[i] = arr[i];
+                                }
+                            }
+                            _ => panic!("Invalid property type for {}", k)
+                        }
+
+                    } else {
+                        panic!("Invalid property type for {}", k);
+                    }
+                }
+            }
+        }
+
+        for v in &mut data_vec {
+            if let FillEntry::DataBlock(_, floats, flags, buf) = v {
+                assert_eq!(*flags, (1 << (floats.len() + 1)) - 1, "DataBlock not filled");
+                *buf = Some(device.create_buffer_with_data(
+                    bytemuck::cast_slice(floats),
+                    wgpu::BufferUsage::UNIFORM
+                ))
+            }
+        }
+
+        let mut bindings: Vec<wgpu::Binding> = vec![];
+        for x in &data_vec {
+            match x {
+                FillEntry::Property(binding, p) => {
+                    bindings.push(wgpu::Binding {
+                        binding: *binding,
+                        resource: match p.expect("Property not assigned") {
+                            MatProperty::Sampler(smp) =>
+                                wgpu::BindingResource::Sampler(res_mgr.get(smp)),
+                            MatProperty::Texture(tex) => {
+                                wgpu::BindingResource::TextureView(&res_mgr.get(tex).default_view)
+                            }
+                            _ => panic!()
+                        }
+                    });
+                },
+                FillEntry::DataBlock(binding, floats, _, buf) => {
+                    bindings.push(wgpu::Binding {
+                        binding: *binding,
+                        resource: wgpu::BindingResource::Buffer {
+                            buffer: buf.as_ref().unwrap(),
+                            range: 0..((floats.len() * std::mem::size_of::<f32>()) as wgpu::BufferAddress)
+                        }
+                    });
+                }
+            }
+        }
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &program.bind_group_layout,
+            bindings: &bindings,
+            label: Some("Some material")
+        });
+
+        drop(bindings);
+        bind_group
+    }
 
 }
 
-// #[derive(Clone)]
-// pub struct MaterialUniforms<'a> {
-//     properties: HashMap<String, UniformValue<'a>>
-// }
-
 impl Material {
 
-    pub fn new(program: ResourceRef<ShaderProgram>) -> Self {
+    pub fn create(
+        res_mgr: &ResManager,
+        wgpu_states: &WgpuState,
+        program: ResourceRef<ShaderProgram>,
+        properties: HashMap<String, MatProperty>) -> Self {
+        let shader_program = res_mgr.get(&program);
+        let bind_group = Self::create_bind_group(res_mgr, &shader_program, &wgpu_states.device, &properties);
         Self {
             program,
-            uniforms: HashMap::new()
+            properties,
+            bind_group,
+            dirty: false
         }
     }
 
@@ -487,42 +650,6 @@ mod internal {
         }
     }
 }
-
-// impl MaterialUniforms<'_> {
-//
-//     fn ref_visit_values<'a, F: FnMut(&str, UniformValue<'a>)>(&'a self, mut func: F) {
-//         for (k, v) in &self.properties {
-//             func(&k, v.clone());
-//         }
-//     }
-// }
-//
-// impl Uniforms for MaterialUniforms<'_> {
-//     fn visit_values<'a, F: FnMut(&str, UniformValue<'a>)>(&'a self, mut func: F) {
-//         self.ref_visit_values(&mut func);
-//     }
-// }
-//
-//
-// pub struct MaterialCombinedUniforms<'a, A> where A: Uniforms {
-//     a: A,
-//     b: MaterialUniforms<'a>
-// }
-//
-// impl<'a, A> MaterialCombinedUniforms<'a, A> where A: Uniforms {
-//     pub(crate) fn new(a: A, b: MaterialUniforms<'a>) -> Self {
-//         Self {
-//             a, b
-//         }
-//     }
-// }
-
-// impl<A> Uniforms for MaterialCombinedUniforms<'_, A> where A: Uniforms {
-//     fn visit_values<'a, F: FnMut(&str, UniformValue<'a>)>(&'a self, mut func: F) {
-//         self.b.ref_visit_values(&mut func);
-//         self.a.visit_values(func);
-//     }
-// }
 
 pub struct GraphicsModule;
 
