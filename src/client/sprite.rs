@@ -169,17 +169,22 @@ impl SpriteVertex {
     }
 }
 
-glium::implement_vertex!(SpriteVertex, v_pos, v_uv);
+impl_vertex!(SpriteVertex, v_pos => 0, v_uv => 1);
 
 #[derive(Copy, Clone, Default)]
 struct SpriteInstanceData {
-    i_world_view: [[f32; 4]; 4],
+    i_mat_col0: [f32; 3],
+    i_mat_col1: [f32; 3],
+    i_mat_col2: [f32; 3],
+    i_mat_col3: [f32; 3],
     i_uv_min: [f32; 2],
     i_uv_max: [f32; 2],
     i_color: [f32; 4]
 }
 
-glium::implement_vertex!(SpriteInstanceData, i_world_view, i_uv_min, i_uv_max, i_color);
+impl_vertex!(SpriteInstanceData,
+    i_mat_col0 => 2, i_mat_col1 => 3, i_mat_col2 => 4, i_mat_col4 = 5,
+    i_uv_min => 6, i_uv_max => 7, i_color => 8);
 
 struct SpriteRenderSystem {
     vbo: wgpu::Buffer,
@@ -256,13 +261,21 @@ impl SpriteRenderSystem {
                 asset::with_local_resource_mgr(|res_mgr| {
                     let sprite_scl: Vec2 = sprite_ref.config.size / (sheet.ppu as f32);
                     let sprite_offset: Vec2 = -(sprite_ref.config.pivot - math::vec2(0.5, 0.5));
-                    let world_view = x.world_view *
+                    let world_view: Mat4 = x.world_view *
                         Mat4::from_nonuniform_scale(sprite_scl.x, sprite_scl.y, 1.0) *
                         Mat4::from_translation(sprite_offset.extend(0.0));
 
+                    #[inline]
+                    fn xyz(v: Vec4) -> [f32; 3] {
+                        [v.x, v.y, v.z]
+                    }
+
                     // sprite_ref.config.
                     SpriteInstanceData {
-                        i_world_view: world_view.into(),
+                        i_mat_col0: xyz(world_view.x),
+                        i_mat_col1: xyz(world_view.y),
+                        i_mat_col2: xyz(world_view.z),
+                        i_mat_col3: xyz(world_view.w),
                         i_uv_min: [sprite_ref.uv_min.x, sprite_ref.uv_min.y],
                         i_uv_max: [sprite_ref.uv_max.x, sprite_ref.uv_max.y],
                         i_color: x.color.into(),
@@ -325,7 +338,7 @@ struct SpriteInstance {
 struct Batch {
     sheet: ResourceRef<SpriteSheet>,
     sprites: Vec<SpriteInstance>,
-    material: Option<Material>
+    material: Option<ResourceRef<Material>>
 }
 
 impl<'a> System<'a> for SpriteRenderSystem {

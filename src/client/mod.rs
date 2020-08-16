@@ -2,7 +2,7 @@ use winit::event;
 
 pub mod graphics;
 pub mod input;
-// pub mod sprite;
+pub mod sprite;
 // pub mod editor;
 // pub mod ui;
 
