@@ -1,21 +1,19 @@
 use std::io;
 use std::rc::Rc;
 
-use glium;
-use glium::{Display, IndexBuffer, Program, Surface, VertexBuffer};
-use glium::index::PrimitiveType;
 use serde::Deserialize;
 use serde_json;
 use specs::{Component, ReadExpect, ReadStorage, System, VecStorage};
 use specs::Join;
 
-use crate::{asset, InitData, InsertInfo, math, Module};
+use crate::{asset, InitData, InsertInfo, math, Module, WgpuState, InitContext, WgpuStateCell};
 use crate::asset::{LoadableAsset, ResManager, ResourcePool, ResourceRef};
-use crate::client::graphics::{Material, Texture};
+use crate::client::graphics::{Material, Texture, ShaderProgram, UniformLayoutConfig, UniformBindingType, UniformPropertyBinding, UniformPropertyType, UniformVisibility};
 use crate::client::graphics;
 use crate::ecs::Transform;
 use crate::math::*;
 use crate::util::Color;
+use crate::resource::{ResourceRef, ResManager};
 
 #[derive(Clone, Deserialize)]
 pub struct SpriteConfig {
@@ -57,7 +55,7 @@ pub struct Sprite {
 
 pub struct SpriteSheet {
     pub sprites: Vec<Sprite>,
-    pub texture: ResourceRef<Texture>,
+    pub texture: Texture,
     pub ppu: u32,
 }
 
@@ -91,48 +89,38 @@ impl SpriteRef {
     }
 }
 
-impl ResourcePool<SpriteSheet> {
+pub fn load_sprite_sheet(res_mgr: &mut ResManager, wgpu_state: &WgpuState, path: &str) -> io::Result<ResourceRef<SpriteSheet>> {
+    let config: SpriteSheetConfig = asset::load_asset(path)?;
+    let texture = graphics::load_texture(wgpu_state,
+                                         &asset::get_asset_path_local(&config._path, &config.texture));
+    let (tex_width, tex_height) = (texture.size.width as f32, texture.size.height as f32);
 
-    pub fn load(&mut self, display: &Display, path: &str) -> io::Result<ResourceRef<SpriteSheet>> {
-        let config: SpriteSheetConfig = asset::load_asset(path)?;
-        let texture = graphics::load_texture(display,
-                                             &asset::get_asset_path_local(&config._path, &config.texture));
-        let (tex_width, tex_height) = {
-            asset::with_local_resource_mgr(|res_mgr| {
-                let t = res_mgr.get(&texture);
-                let tex_width = t.raw_texture.width() as f32;
-                let tex_height = t.raw_texture.height() as f32;
-                (tex_width, tex_height)
-            })
-        };
+    let sprites: Vec<Sprite> = (&config.sprites).into_iter()
+        .map(|x| {
+            let tuv1: Vec2 = x.pos - x.size * 0.5;
+            let tuv2: Vec2 = x.pos + x.size * 0.5;
 
-        let sprites: Vec<Sprite> = (&config.sprites).into_iter()
-            .map(|x| {
-                let tuv1: Vec2 = x.pos - x.size * 0.5;
-                let tuv2: Vec2 = x.pos + x.size * 0.5;
+            let u1 = tuv1.x / tex_width;
+            let v1 = tuv2.y / tex_height;
+            let u2 = tuv2.x / tex_width;
+            let v2 = tuv1.y / tex_height;
 
-                let u1 = tuv1.x / tex_width;
-                let v1 = tuv2.y / tex_height;
-                let u2 = tuv2.x / tex_width;
-                let v2 = tuv1.y / tex_height;
+            Sprite { config: x.clone(), uv_min: vec2(u1, v1), uv_max: vec2(u2, v2) }
+        })
+        .collect();
 
-                Sprite { config: x.clone(), uv_min: vec2(u1, v1), uv_max: vec2(u2, v2) }
-            })
-            .collect();
+    let sheet = SpriteSheet {
+        texture,
+        sprites,
+        ppu: config.ppu,
+    };
 
-        let sheet = SpriteSheet {
-            texture,
-            sprites,
-            ppu: config.ppu,
-        };
-
-        Ok(self.add(sheet))
-    }
+    Ok(res_mgr.add(sheet))
 }
 
 pub struct SpriteRenderer {
     pub sprite: SpriteRef,
-    pub material: Option<graphics::Material>,
+    pub material: Option<ResourceRef<Material>>,
     pub color: Color
 }
 
@@ -155,9 +143,9 @@ impl Component for SpriteRenderer {
 pub struct SpriteModule;
 
 impl Module for SpriteModule {
-    fn init(&self, init_data: &mut InitData) {
-        let display_clone = init_data.display.clone();
-        init_data.dispatch_thread_local(
+    fn init(&self, init_context: &mut InitContext) {
+        let display_clone = init_context.display.clone();
+        init_context.dispatch_thread_local(
         InsertInfo::new("sprite")
                 .before(&[graphics::DEP_RENDER_TEARDOWN])
                 .after(&[graphics::DEP_RENDER_SETUP])
@@ -194,20 +182,46 @@ struct SpriteInstanceData {
 glium::implement_vertex!(SpriteInstanceData, i_world_view, i_uv_min, i_uv_max, i_color);
 
 struct SpriteRenderSystem {
-    vbo: VertexBuffer<SpriteVertex>,
-    instance_buf: VertexBuffer<SpriteInstanceData>,
-    ibo: IndexBuffer<u16>,
-    sprite_program: ResourceRef<Program>,
-    display: Rc<Display>
+    vbo: wgpu::Buffer,
+    instance_buf: wgpu::Buffer,
+    ibo: wgpu::Buffer,
+    sprite_program: ShaderProgram,
+    wgpu_state: WgpuStateCell
 }
 
 impl SpriteRenderSystem {
 
-    pub fn new(display_rc: Rc<Display>) -> Self {
-        let display = &*display_rc;
+    pub fn new(wgpu_state_cell: WgpuStateCell) -> Self {
+        let wgpu_state = wgpu_state_cell.borrow();
         let vert = include_str!("../../assets/sprite_default.vert");
         let frag = include_str!("../../assets/sprite_default.frag");
-        let program = graphics::load_shader_by_content(&display, vert, frag);
+        let program = graphics::load_shader_by_content(&*wgpu_state.device,
+           vert, frag,
+           "sprite_default.vert", "sprite_default.frag",
+           &[
+               UniformLayoutConfig {
+                   binding: 0,
+                   name: "".to_string(),
+                   ty: UniformBindingType::DataBlock {
+                       members: vec![
+                           UniformPropertyBinding("u_proj".to_string(), UniformPropertyType::Mat4)
+                       ]
+                   },
+                   visibility: UniformVisibility::Vertex
+               },
+               UniformLayoutConfig {
+                   binding: 1,
+                   name: "u_texture".to_string(),
+                   ty: UniformBindingType::Texture,
+                   visibility: UniformVisibility::Fragment
+               },
+               UniformLayoutConfig {
+                   binding: 2,
+                   name: "u_sampler".to_string(),
+                   ty: UniformBindingType::Sampler,
+                   visibility: UniformVisibility::Fragment
+               },
+           ]);
         let vbo = VertexBuffer::new(display, &[
             SpriteVertex::new(-0.5, -0.5, 0., 0.),
             SpriteVertex::new(-0.5, 0.5, 0., 1.),
@@ -221,12 +235,14 @@ impl SpriteRenderSystem {
         let ibo = IndexBuffer::new(display, PrimitiveType::TrianglesList,
                                    &[0u16, 1, 2, 0, 2, 3]).unwrap();
 
+        drop(wgpu_state);
+
         Self {
             vbo,
             instance_buf,
             ibo,
             sprite_program: program,
-            display: display_rc
+            wgpu_state: wgpu_state_cell
         }
     }
 

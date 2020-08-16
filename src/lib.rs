@@ -12,6 +12,7 @@ use crate::resource::ResManager;
 use crate::client::input::RawInputData;
 use crate::client::WindowInfo;
 use crate::ecs::{Time, HasParent};
+use crate::util::Color;
 use std::sync::atomic::{AtomicBool, Ordering};
 use specs_hierarchy::HierarchySystem;
 use std::cell::RefCell;
@@ -22,7 +23,7 @@ pub type WindowEventLoop = event_loop::EventLoop<()>;
 pub extern crate log;
 pub use wgpu;
 pub use specs;
-use crate::util::Color;
+pub use bytemuck;
 
 pub mod asset;
 pub mod resource;

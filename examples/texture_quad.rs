@@ -1,10 +1,9 @@
-use mu;
+use mu::*;
 use mu::math;
 use mu::{RuntimeBuilder, Module, InsertInfo, WgpuStateCell, InitContext, StartContext};
 use mu::client::graphics::*;
 use specs::prelude::*;
 use mu::ecs::{Transform, Time};
-use mu::client::graphics::CameraProjection::Orthographic;
 use mu::util::Color;
 use mu::client::input::RawInputData;
 use winit::event::VirtualKeyCode;
@@ -16,9 +15,6 @@ struct QuadVertex {
     pub uv: [f32; 2]
 }
 
-unsafe impl bytemuck::Pod for QuadVertex {}
-unsafe impl bytemuck::Zeroable for QuadVertex {}
-
 impl QuadVertex {
     fn new(x: f32, y: f32, u: f32, v: f32) -> Self {
         Self {
@@ -26,27 +22,9 @@ impl QuadVertex {
             uv : [u, v]
         }
     }
-
-    fn desc<'a>() -> wgpu::VertexBufferDescriptor<'a> {
-        use std::mem;
-        wgpu::VertexBufferDescriptor {
-            stride: mem::size_of::<QuadVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::InputStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttributeDescriptor {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float3
-                },
-                wgpu::VertexAttributeDescriptor {
-                    offset: mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float2
-                }
-            ]
-        }
-    }
 }
+
+impl_vertex!(QuadVertex, position => 0, uv => 1);
 
 struct DrawQuadSystem {
     wgpu_state: WgpuStateCell,
@@ -137,7 +115,7 @@ impl DrawQuadSystem {
             depth_stencil_state: None,
             vertex_state: wgpu::VertexStateDescriptor {
                 index_format: wgpu::IndexFormat::Uint16,
-                vertex_buffers: &[QuadVertex::desc()]
+                vertex_buffers: &[get_vertex!(QuadVertex)]
             },
             sample_count: 1,
             sample_mask: !0,
@@ -235,7 +213,7 @@ impl Module for QuadModule {
     fn start(&self, start_data: &mut StartContext) {
         start_data.world.create_entity()
             .with(Transform::new())
-            .with(Camera { projection: Orthographic { size: 2., z_near: -1., z_far: 1. },
+            .with(Camera { projection: CameraProjection::Orthographic { size: 2., z_near: -1., z_far: 1. },
                 clear_color: Some(Color::rgb(0.1, 0.1, 0.3)),
                 clear_depth: true
             })

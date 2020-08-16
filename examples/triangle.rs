@@ -13,27 +13,7 @@ struct TriangleVertex {
     pub position: [f32; 3]
 }
 
-impl TriangleVertex {
-
-    fn desc<'a>() -> wgpu::VertexBufferDescriptor<'a> {
-        use std::mem;
-        wgpu::VertexBufferDescriptor {
-            stride: mem::size_of::<TriangleVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::InputStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttributeDescriptor {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float3
-                }
-            ]
-        }
-    }
-
-}
-
-unsafe impl bytemuck::Pod for TriangleVertex {}
-unsafe impl bytemuck::Zeroable for TriangleVertex {}
+impl_vertex!(TriangleVertex, position => 0);
 
 #[derive(Copy, Clone)]
 struct TriangleUniform {
@@ -127,9 +107,7 @@ impl DrawTriangleSystem {
                 depth_stencil_state: None,
                 vertex_state: wgpu::VertexStateDescriptor {
                     index_format: wgpu::IndexFormat::Uint16,
-                    vertex_buffers: &[
-                        TriangleVertex::desc()
-                    ]
+                    vertex_buffers: &[get_vertex![TriangleVertex]]
                 },
                 sample_count: 1,
                 sample_mask: !0,

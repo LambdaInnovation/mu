@@ -18,7 +18,6 @@ use uuid::Uuid;
 use std::collections::HashMap;
 use shaderc::ShaderKind;
 use std::io::Cursor;
-use wgpu::BindGroupDescriptor;
 
 pub const DEP_CAM_DRAW_SETUP: &str = "cam_draw_setup";
 pub const DEP_CAM_DRAW_TEARDOWN: &str = "cam_draw_teardown";
@@ -27,6 +26,84 @@ pub mod render_order {
     pub const OPAQUE: i32 = 0;
     pub const UI: i32 = 1000;
     pub const DEBUG_UI: i32 = 11000;
+}
+
+pub trait HasVertexFormat {
+    fn format() -> wgpu::VertexFormat;
+}
+
+impl HasVertexFormat for f32 {
+    fn format() -> wgpu::VertexFormat {
+        wgpu::VertexFormat::Float
+    }
+}
+
+impl HasVertexFormat for [f32; 2] {
+    fn format() -> wgpu::VertexFormat {
+        wgpu::VertexFormat::Float2
+    }
+}
+
+impl HasVertexFormat for [f32; 3] {
+    fn format() -> wgpu::VertexFormat {
+        wgpu::VertexFormat::Float3
+    }
+}
+
+pub fn __vertex_format<T>(_: &Option<&T>) -> wgpu::VertexFormat where T: HasVertexFormat {
+    T::format()
+}
+
+pub fn __size_of<T>(_: &Option<&T>) -> wgpu::BufferAddress {
+    std::mem::size_of::<T>() as wgpu::BufferAddress
+}
+
+#[macro_export]
+macro_rules! impl_vertex {
+    ($struct_name:ident, $($field_name:ident => $field_location:expr), +) => {
+        unsafe impl $crate::bytemuck::Pod for $struct_name {}
+        unsafe impl $crate::bytemuck::Zeroable for $struct_name {}
+
+        impl $struct_name {
+
+            pub fn get_vertex_buffer_desc<'a>(v: &'a Vec<$crate::wgpu::VertexAttributeDescriptor>)
+                -> $crate::wgpu::VertexBufferDescriptor<'a> {
+                use std::mem::size_of;
+
+                wgpu::VertexBufferDescriptor {
+                    stride: size_of::<$struct_name>() as wgpu::BufferAddress,
+                    step_mode: $crate::wgpu::InputStepMode::Vertex,
+                    attributes: &v
+                }
+            }
+
+            pub fn get_vertex_attr_array() -> Vec<$crate::wgpu::VertexAttributeDescriptor> {
+                let mut attrs = vec![];
+                let mut bytes_sum = 0 as $crate::wgpu::BufferAddress;
+
+                $(
+                    let field_opt = None::<&$struct_name>.map(|v| &v.$field_name);
+                    attrs.push($crate::wgpu::VertexAttributeDescriptor {
+                        offset: bytes_sum,
+                        shader_location: $field_location,
+                        format: {
+                            $crate::client::graphics::__vertex_format(&field_opt)
+                        }
+                    });
+                    bytes_sum += $crate::client::graphics::__size_of(&field_opt);
+                )+
+                attrs
+            }
+
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! get_vertex {
+    ($struct_name:ident) => {
+        $struct_name::get_vertex_buffer_desc(&$struct_name::get_vertex_attr_array());
+    }
 }
 
 pub enum CameraProjection {
@@ -381,6 +458,7 @@ impl Material {
     pub fn set(&mut self, name: String, p: MatProperty) {
         assert!(self.properties.contains_key(&name), "Can't add non-existent property");
         self.properties.insert(name, p);
+        self.mark_dirty();
     }
 
     fn mark_dirty(&mut self) {
@@ -400,8 +478,8 @@ impl Material {
         }
 
         enum FillKey {
-            DataBlock(u32, usize, usize, usize), // index, property index, float offset
-            Property(u32, usize)
+            DataBlock(usize, usize, usize), // index, property index, float offset
+            Property(usize)
         }
 
         let mut mapping: HashMap<String, FillKey> = HashMap::new();
@@ -409,7 +487,7 @@ impl Material {
             match &elem.ty {
                 UniformBindingType::Sampler | UniformBindingType::Texture => {
                     if elem.name.len() > 0 {
-                        mapping.insert(elem.name.clone(), FillKey::Property(elem.binding, idx));
+                        mapping.insert(elem.name.clone(), FillKey::Property(idx));
                     }
                 },
                 UniformBindingType::DataBlock { members } => {
@@ -417,7 +495,7 @@ impl Material {
                     let mut sum = 0;
                     for (idx2, mem) in members.iter().enumerate() {
                         if elem.name.len() > 0 {
-                            mapping.insert(elem.name.clone(), FillKey::DataBlock(elem.binding, idx, idx2, sum));
+                            mapping.insert(elem.name.clone(), FillKey::DataBlock(idx, idx2, sum));
                         }
                         sum += mem.1.element_count();
                     }
@@ -425,7 +503,6 @@ impl Material {
             }
         }
 
-        let mut buffer_vec: Vec<wgpu::Buffer> = vec![];
         let mut data_vec = layout
             .iter()
             .map(|layout| {
@@ -445,14 +522,14 @@ impl Material {
                 .expect(&format!("No property named {} specified in config", &k));
 
             match fill_key {
-                FillKey::Property(binding, idx) => {
+                FillKey::Property(idx) => {
                     if let FillEntry::Property(_, p) = &mut data_vec[*idx] {
                         *p = Some(v);
                     } else {
                         panic!("Invalid property type for {}", k);
                     }
                 },
-                FillKey::DataBlock(binding, ix, ix2, offset) => {
+                FillKey::DataBlock(ix, ix2, offset) => {
                     if let FillEntry::DataBlock(_, floats, flags, _) = &mut data_vec[*ix] {
                         *flags = *flags | (1 << ix2);
 
