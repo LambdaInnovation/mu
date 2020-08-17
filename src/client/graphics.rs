@@ -281,8 +281,40 @@ pub fn load_shader_by_content(device: &wgpu::Device, vertex: &str, fragment: &st
 }
 
 #[derive(Serialize, Deserialize)]
+pub enum FilterMode {
+    Nearest,
+    Bilinear,
+    // TODO: Trilinear & mipmap
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SamplerConfig {
+    #[serde(default)]
+    address: wgpu::AddressMode,
+    filter: FilterMode
+}
+
+fn create_sampler_from_config(device: &wgpu::Device, cfg: &SamplerConfig) -> wgpu::Sampler {
+    let (min_filter, mag_filter, mipmap_filter) = match cfg.filter {
+        FilterMode::Nearest => (wgpu::FilterMode::Nearest, wgpu::FilterMode::Nearest, wgpu::FilterMode::Nearest),
+        FilterMode::Bilinear => (wgpu::FilterMode::Nearest, wgpu::FilterMode::Linear, wgpu::FilterMode::Nearest),
+    };
+
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        address_mode_u: cfg.address,
+        address_mode_v: cfg.address,
+        address_mode_w: cfg.address,
+        min_filter, mag_filter, mipmap_filter,
+        lod_min_clamp: 0.,
+        lod_max_clamp: 0.,
+        compare: wgpu::CompareFunction::Always
+    })
+}
+
+#[derive(Serialize, Deserialize)]
 struct TextureConfig {
     image: String,
+    sampler: SamplerConfig,
     #[serde(skip)]
     _path: String
 }
@@ -301,7 +333,8 @@ pub struct Texture {
     pub uuid: Uuid,
     pub size: wgpu::Extent3d,
     pub raw_texture: wgpu::Texture,
-    pub default_view: wgpu::TextureView
+    pub default_view: wgpu::TextureView,
+    pub sampler: wgpu::Sampler
 }
 
 pub fn load_texture(wgpu_state: &WgpuState, path: &str) -> Texture {
@@ -310,10 +343,10 @@ pub fn load_texture(wgpu_state: &WgpuState, path: &str) -> Texture {
     let img = image::load_from_memory_with_format(&img_bytes,
                                                   image::ImageFormat::Png).unwrap();
     let img_dims = img.dimensions();
-    create_texture(wgpu_state, img.into_rgba().into_vec(), img_dims)
+    create_texture(wgpu_state, img.into_rgba().into_vec(), img_dims, &config.sampler)
 }
 
-pub fn create_texture(wgpu_state: &WgpuState, rgba_bytes: Vec<u8>, dims: (u32, u32)) -> Texture {
+pub fn create_texture(wgpu_state: &WgpuState, rgba_bytes: Vec<u8>, dims: (u32, u32), sampler_cfg: &SamplerConfig) -> Texture {
     let extent = wgpu::Extent3d {
         width: dims.0,
         height: dims.1,
@@ -358,12 +391,14 @@ pub fn create_texture(wgpu_state: &WgpuState, rgba_bytes: Vec<u8>, dims: (u32, u
     wgpu_state.queue.submit(&[encoder.finish()]);
 
     let default_view = raw_texture.create_default_view();
+    let sampler = create_sampler_from_config(&wgpu_state.device, sampler_cfg);
 
     let ret = Texture {
         uuid: Uuid::new_v4(),
         raw_texture,
         size: extent,
-        default_view
+        default_view,
+        sampler
     };
     ret
 }
@@ -433,6 +468,7 @@ pub enum MatProperty {
     Vec3(Vec3),
     Mat4(Mat4),
     Texture(ResourceRef<Texture>),
+    TextureSampler(ResourceRef<Texture>),
     Sampler(ResourceRef<wgpu::Sampler>)
 }
 
@@ -531,7 +567,7 @@ impl Material {
                 },
                 FillKey::DataBlock(ix, ix2, offset) => {
                     if let FillEntry::DataBlock(_, floats, flags, _) = &mut data_vec[*ix] {
-                        *flags = *flags | (1 << ix2);
+                        *flags = *flags | (1 << ix2 as u32);
 
                         let slice = &mut floats.as_mut_slice()[*offset..];
                         match v {
@@ -581,6 +617,9 @@ impl Material {
                                 wgpu::BindingResource::Sampler(res_mgr.get(smp)),
                             MatProperty::Texture(tex) => {
                                 wgpu::BindingResource::TextureView(&res_mgr.get(tex).default_view)
+                            },
+                            MatProperty::TextureSampler(tex) => {
+                                wgpu::BindingResource::Sampler(&res_mgr.get(tex).sampler)
                             }
                             _ => panic!()
                         }

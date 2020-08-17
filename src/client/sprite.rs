@@ -7,13 +7,15 @@ use specs::{Component, ReadExpect, ReadStorage, System, VecStorage};
 use specs::Join;
 
 use crate::{asset, InitData, InsertInfo, math, Module, WgpuState, InitContext, WgpuStateCell};
-use crate::asset::{LoadableAsset, ResManager, ResourcePool, ResourceRef};
-use crate::client::graphics::{Material, Texture, ShaderProgram, UniformLayoutConfig, UniformBindingType, UniformPropertyBinding, UniformPropertyType, UniformVisibility};
+use crate::asset::*;
+use crate::resource::*;
+use crate::client::graphics::{Material, Texture, ShaderProgram, UniformLayoutConfig, UniformBindingType, UniformPropertyBinding, UniformPropertyType, UniformVisibility, MatProperty, SamplerConfig};
 use crate::client::graphics;
 use crate::ecs::Transform;
 use crate::math::*;
 use crate::util::Color;
 use crate::resource::{ResourceRef, ResManager};
+use std::collections::HashMap;
 
 #[derive(Clone, Deserialize)]
 pub struct SpriteConfig {
@@ -55,7 +57,7 @@ pub struct Sprite {
 
 pub struct SpriteSheet {
     pub sprites: Vec<Sprite>,
-    pub texture: Texture,
+    pub texture: ResourceRef<Texture>,
     pub ppu: u32,
 }
 
@@ -110,7 +112,7 @@ pub fn load_sprite_sheet(res_mgr: &mut ResManager, wgpu_state: &WgpuState, path:
         .collect();
 
     let sheet = SpriteSheet {
-        texture,
+        texture: res_mgr.add(texture),
         sprites,
         ppu: config.ppu,
     };
@@ -186,12 +188,17 @@ impl_vertex!(SpriteInstanceData,
     i_mat_col0 => 2, i_mat_col1 => 3, i_mat_col2 => 4, i_mat_col4 = 5,
     i_uv_min => 6, i_uv_max => 7, i_color => 8);
 
+#[derive(Copy, Clone)]
+struct SpriteUniformData {
+    pub mat: [f32; 16]
+}
+
 struct SpriteRenderSystem {
     vbo: wgpu::Buffer,
-    instance_buf: wgpu::Buffer,
     ibo: wgpu::Buffer,
-    sprite_program: ShaderProgram,
-    wgpu_state: WgpuStateCell
+    sprite_program: ResourceRef<ShaderProgram>,
+    wgpu_state: WgpuStateCell,
+    material: Option<Material>
 }
 
 impl SpriteRenderSystem {
@@ -200,6 +207,7 @@ impl SpriteRenderSystem {
         let wgpu_state = wgpu_state_cell.borrow();
         let vert = include_str!("../../assets/sprite_default.vert");
         let frag = include_str!("../../assets/sprite_default.frag");
+
         let program = graphics::load_shader_by_content(&*wgpu_state.device,
            vert, frag,
            "sprite_default.vert", "sprite_default.frag",
@@ -227,27 +235,33 @@ impl SpriteRenderSystem {
                    visibility: UniformVisibility::Fragment
                },
            ]);
-        let vbo = VertexBuffer::new(display, &[
+        let program_ref = res_mgr.add(program);
+
+        let vertices = [
             SpriteVertex::new(-0.5, -0.5, 0., 0.),
             SpriteVertex::new(-0.5, 0.5, 0., 1.),
             SpriteVertex::new(0.5, 0.5, 1., 1.),
             SpriteVertex::new(0.5, -0.5, 1., 0.)
-        ]).unwrap();
-        let instance_buf: VertexBuffer<SpriteInstanceData> = VertexBuffer::dynamic(
-            display, &[Default::default(); 4096])
-            .unwrap();
+        ];
+        let vbo = wgpu_state.device.create_buffer_with_data(
+            bytemuck::cast_slice(&[vertices]),
+            wgpu::BufferUsage::VERTEX
+        );
 
-        let ibo = IndexBuffer::new(display, PrimitiveType::TrianglesList,
-                                   &[0u16, 1, 2, 0, 2, 3]).unwrap();
+        let indices = [0u16, 1, 2, 0, 2, 3];
+        let ibo = wgpu_state.device.create_buffer_with_data(
+            bytemuck::cast(&ibo),
+            wgpu::BufferUsage::INDEX
+        );
 
         drop(wgpu_state);
 
         Self {
             vbo,
-            instance_buf,
             ibo,
-            sprite_program: program,
-            wgpu_state: wgpu_state_cell
+            sprite_program: program_ref,
+            wgpu_state: wgpu_state_cell,
+            material: None
         }
     }
 
@@ -258,72 +272,85 @@ impl SpriteRenderSystem {
             .map(|x| {
                 let sprite_ref = &sheet.sprites[x.idx];
 
-                asset::with_local_resource_mgr(|res_mgr| {
-                    let sprite_scl: Vec2 = sprite_ref.config.size / (sheet.ppu as f32);
-                    let sprite_offset: Vec2 = -(sprite_ref.config.pivot - math::vec2(0.5, 0.5));
-                    let world_view: Mat4 = x.world_view *
-                        Mat4::from_nonuniform_scale(sprite_scl.x, sprite_scl.y, 1.0) *
-                        Mat4::from_translation(sprite_offset.extend(0.0));
+                let sprite_scl: Vec2 = sprite_ref.config.size / (sheet.ppu as f32);
+                let sprite_offset: Vec2 = -(sprite_ref.config.pivot - math::vec2(0.5, 0.5));
+                let world_view: Mat4 = x.world_view *
+                    Mat4::from_nonuniform_scale(sprite_scl.x, sprite_scl.y, 1.0) *
+                    Mat4::from_translation(sprite_offset.extend(0.0));
 
-                    #[inline]
-                    fn xyz(v: Vec4) -> [f32; 3] {
-                        [v.x, v.y, v.z]
-                    }
+                #[inline]
+                fn xyz(v: Vec4) -> [f32; 3] {
+                    [v.x, v.y, v.z]
+                }
 
-                    // sprite_ref.config.
-                    SpriteInstanceData {
-                        i_mat_col0: xyz(world_view.x),
-                        i_mat_col1: xyz(world_view.y),
-                        i_mat_col2: xyz(world_view.z),
-                        i_mat_col3: xyz(world_view.w),
-                        i_uv_min: [sprite_ref.uv_min.x, sprite_ref.uv_min.y],
-                        i_uv_max: [sprite_ref.uv_max.x, sprite_ref.uv_max.y],
-                        i_color: x.color.into(),
-                    }
-                })
+                // sprite_ref.config.
+                SpriteInstanceData {
+                    i_mat_col0: xyz(world_view.x),
+                    i_mat_col1: xyz(world_view.y),
+                    i_mat_col2: xyz(world_view.z),
+                    i_mat_col3: xyz(world_view.w),
+                    i_uv_min: [sprite_ref.uv_min.x, sprite_ref.uv_min.y],
+                    i_uv_max: [sprite_ref.uv_max.x, sprite_ref.uv_max.y],
+                    i_color: x.color.into(),
+                }
             })
             .collect::<Vec<_>>();
 
-        // if instance_data.len() != batch.sprites.len() {
-        self.instance_buf = VertexBuffer::dynamic(&*self.display, &instance_data).unwrap();
-        // } else {
-        //     self.instance_buf.write(&instance_data);
-        // }
+        let wgpu_state = self.wgpu_state.borrow();
+        let instance_buf = wgpu_state.device.create_buffer_with_data(
+            bytemuck::cast_slice(&instance_data),
+            wgpu::BufferUsage::VERTEX
+        );
 
         graphics::with_render_data(|r| {
             let camera_infos = &r.camera_infos;
-            let frame = &mut r.frame;
             for cam in camera_infos {
-                let wvp_mat: [[f32; 4]; 4] = cam.wvp_matrix.into();
+                let wvp_mat: [f32; 16] = cam.wvp_matrix.into();
 
-                asset::with_local_resource_mgr(|res_mgr| {
-                    let texture = res_mgr.get(&sheet.texture);
-                    let uniforms = glium::uniform! {
-                        u_proj: wvp_mat,
-                        u_texture: &texture.raw_texture
-                    };
+                let material = match &self.material {
+                    Some(mat) => {
 
-                    if let Some(material) = &batch.material {
-                        let program = res_mgr.get(&material.program);
-                        let mat_uniforms = material.as_uniforms(&res_mgr);
-                        let uniforms =
-                            graphics::MaterialCombinedUniforms::new(uniforms, mat_uniforms);
-                        frame.draw(
-                            (&self.vbo, self.instance_buf.per_instance().unwrap()),
-                            &self.ibo,
-                            program,
-                            &uniforms,
-                            &Default::default()).unwrap();
-                    } else {
-                        let program = res_mgr.get(&self.sprite_program);
-                        frame.draw(
-                            (&self.vbo, self.instance_buf.per_instance().unwrap()),
-                            &self.ibo,
-                            program,
-                            &uniforms,
-                            &Default::default()).unwrap();
+                    },
+                    None => {
+                        let mut properties = HashMap::new();
+                        properties.insert("u_proj".to_string(), MatProperty::Mat4(cam.wvp_matrix));
+                        properties.insert("u_texture".to_string(), MatProperty::Texture(sheet.texture.clone()));
+                        properties.insert("u_sampler".to_string(), MatProperty::)
+                        self.material = Some(Material::create(
+                            res_mgr,
+                            &*wgpu_state,
+                            self.sprite_program.clone(),
+                            properties
+                        ))
                     }
-                });
+                }
+
+                let texture = res_mgr.get(&sheet.texture);
+                let uniforms = glium::uniform! {
+                    u_proj: wvp_mat,
+                    u_texture: &texture.raw_texture
+                };
+
+                if let Some(material) = &batch.material {
+                    let program = res_mgr.get(&material.program);
+                    let mat_uniforms = material.as_uniforms(&res_mgr);
+                    let uniforms =
+                        graphics::MaterialCombinedUniforms::new(uniforms, mat_uniforms);
+                    frame.draw(
+                        (&self.vbo, self.instance_buf.per_instance().unwrap()),
+                        &self.ibo,
+                        program,
+                        &uniforms,
+                        &Default::default()).unwrap();
+                } else {
+                    let program = res_mgr.get(&self.sprite_program);
+                    frame.draw(
+                        (&self.vbo, self.instance_buf.per_instance().unwrap()),
+                        &self.ibo,
+                        program,
+                        &uniforms,
+                        &Default::default()).unwrap();
+                }
             }
         });
     }
