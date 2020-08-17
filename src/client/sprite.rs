@@ -1,15 +1,13 @@
 use std::io;
-use std::rc::Rc;
 
 use serde::Deserialize;
 use serde_json;
-use specs::{Component, ReadExpect, ReadStorage, System, VecStorage};
+use specs::prelude::*;
 use specs::Join;
 
-use crate::{asset, InitData, InsertInfo, math, Module, WgpuState, InitContext, WgpuStateCell};
+use crate::*;
 use crate::asset::*;
-use crate::resource::*;
-use crate::client::graphics::{Material, Texture, ShaderProgram, UniformLayoutConfig, UniformBindingType, UniformPropertyBinding, UniformPropertyType, UniformVisibility, MatProperty, SamplerConfig};
+use crate::client::graphics::*;
 use crate::client::graphics;
 use crate::ecs::Transform;
 use crate::math::*;
@@ -146,13 +144,13 @@ pub struct SpriteModule;
 
 impl Module for SpriteModule {
     fn init(&self, init_context: &mut InitContext) {
-        let display_clone = init_context.display.clone();
         init_context.dispatch_thread_local(
         InsertInfo::new("sprite")
-                .before(&[graphics::DEP_RENDER_TEARDOWN])
-                .after(&[graphics::DEP_RENDER_SETUP])
+                .before(&[graphics::DEP_CAM_DRAW_TEARDOWN])
+                .after(&[graphics::DEP_CAM_DRAW_SETUP])
                 .order(graphics::render_order::OPAQUE),
-            move |f| f.insert_thread_local(SpriteRenderSystem::new(display_clone)));
+            move |init_data, i| i.insert_thread_local(
+                SpriteRenderSystem::new(&mut init_data.res_mgr, init_data.wgpu_state.clone())));
     }
 }
 
@@ -209,7 +207,7 @@ impl SpriteRenderSystem {
         let vert = include_str!("../../assets/sprite_default.vert");
         let frag = include_str!("../../assets/sprite_default.frag");
 
-        let program = graphics::load_shader_by_content(&*wgpu_state.device,
+        let program = graphics::load_shader_by_content(&wgpu_state.device,
            vert, frag,
            "sprite_default.vert", "sprite_default.frag",
            &[
@@ -252,7 +250,7 @@ impl SpriteRenderSystem {
 
         let indices = [0u16, 1, 2, 0, 2, 3];
         let ibo = wgpu_state.device.create_buffer_with_data(
-            bytemuck::cast(&ibo),
+            &bytemuck::cast_slice(&indices),
             wgpu::BufferUsage::INDEX
         );
 
@@ -277,7 +275,7 @@ impl SpriteRenderSystem {
             depth_stencil_state: None,
             vertex_state: wgpu::VertexStateDescriptor {
                 index_format: wgpu::IndexFormat::Uint16,
-                vertex_buffers: &[get_vertex!(SpriteVertex), get_vertex!(SpriteInstanceData)]
+                vertex_buffers: &[crate::get_vertex!(SpriteVertex), crate::get_vertex!(SpriteInstanceData)]
             },
             sample_count: 1,
             sample_mask: !0,
@@ -327,21 +325,26 @@ impl SpriteRenderSystem {
             })
             .collect::<Vec<_>>();
 
-        let wgpu_state = self.wgpu_state.borrow();
-        let instance_buf = wgpu_state.device.create_buffer_with_data(
-            bytemuck::cast_slice(&instance_data),
-            wgpu::BufferUsage::VERTEX
-        );
+        let instance_buf = {
+            let wgpu_state = self.wgpu_state.borrow();
+            let instance_buf = wgpu_state.device.create_buffer_with_data(
+                bytemuck::cast_slice(&instance_data),
+                wgpu::BufferUsage::VERTEX
+            );
+            instance_buf
+        };
 
         graphics::with_render_data(|r| {
-            let camera_infos = &r.camera_infos;
+            let camera_infos = &mut r.camera_infos;
+            let wgpu_state = self.wgpu_state.borrow();
+
             for cam in camera_infos {
-                let wvp_mat: [f32; 16] = cam.wvp_matrix.into();
 
                 let material = match &mut self.material {
                     Some(mat) => {
                         mat.set("u_texture", MatProperty::Texture(sheet.texture.clone()));
                         mat.set("u_sampler", MatProperty::TextureSampler(sheet.texture.clone()));
+                        mat
                     },
                     None => {
                         let mut properties = HashMap::new();
@@ -353,36 +356,26 @@ impl SpriteRenderSystem {
                             &*wgpu_state,
                             self.sprite_program.clone(),
                             properties
-                        ))
+                        ));
+
+                        self.material.as_mut().unwrap()
                     }
                 };
 
-                let texture = res_mgr.get(&sheet.texture);
-                let uniforms = glium::uniform! {
-                    u_proj: wvp_mat,
-                    u_texture: &texture.raw_texture
-                };
-
-                if let Some(material) = &batch.material {
-                    let program = res_mgr.get(&material.program);
-                    let mat_uniforms = material.as_uniforms(&res_mgr);
-                    let uniforms =
-                        graphics::MaterialCombinedUniforms::new(uniforms, mat_uniforms);
-                    frame.draw(
-                        (&self.vbo, self.instance_buf.per_instance().unwrap()),
-                        &self.ibo,
-                        program,
-                        &uniforms,
-                        &Default::default()).unwrap();
+                let bind_group = material.get_bind_group(&res_mgr, &wgpu_state.device);
+                if let Some(_material) = &batch.material {
+                    // TODO
                 } else {
-                    let program = res_mgr.get(&self.sprite_program);
-                    frame.draw(
-                        (&self.vbo, self.instance_buf.per_instance().unwrap()),
-                        &self.ibo,
-                        program,
-                        &uniforms,
-                        &Default::default()).unwrap();
                 }
+
+                let mut render_pass = cam.render_pass(&*wgpu_state);
+                render_pass.set_pipeline(&self.pipeline);
+                render_pass.set_bind_group(0, bind_group, &[]);
+                render_pass.set_vertex_buffer(0, &self.vbo, 0, 0);
+                render_pass.set_vertex_buffer(1, &instance_buf, 0, 0);
+                render_pass.set_index_buffer(&self.ibo, 0, 0);
+
+                render_pass.draw_indexed(0..6, 0, 0..instance_data.len() as u32);
             }
         });
     }

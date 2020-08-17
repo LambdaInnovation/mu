@@ -1,20 +1,23 @@
-use mu::client::sprite::{SpriteModule, SpriteRenderer, SpriteRef, SpriteSheet};
-use mu::client::graphics::{GraphicsModule, Camera, CameraProjection};
-use mu::{RuntimeBuilder, Module, StartData, math};
+use mu::*;
+use mu::client::graphics::*;
+use mu::client::sprite::*;
+use mu::asset::*;
+use mu::resource::*;
 use specs::{WorldExt, Builder};
 use mu::ecs::Transform;
 use mu::util::Color;
-use mu::asset::ResManager;
+use std::borrow::Borrow;
 
 struct MyModule;
 
 impl Module for MyModule {
-    fn start(&self, start_data: &mut StartData) {
+    fn start(&self, start_data: &mut StartContext) {
         let (spr_main, spr_lu, spr_ld, spr_ru, spr_rd) = {
             let mut res_mgr = start_data.world.write_resource::<ResManager>();
-            let sheet_ref = res_mgr
-                .get_pool_mut::<SpriteSheet>()
-                .load(&start_data.display, "texture/test_grid.sheet.json").unwrap();
+
+            let wgpu_state = (*start_data.wgpu_state).borrow();
+            let sheet_ref = load_sprite_sheet(&mut res_mgr, &wgpu_state, "texture/test_grid.sheet.json")
+                .unwrap();
 
             let sprite_ref = SpriteRef::new(&sheet_ref, 0);
             let sprite_ref_lu = SpriteRef::from_name(&res_mgr, &sheet_ref, "LU").unwrap();

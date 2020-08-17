@@ -34,5 +34,6 @@ futures = "*"
 #imgui-glium-renderer = "*"
 #imgui-winit-support = "*"
 winit = "0.22"
+wgpu-types = { version="0.5", features=["serde"] }
 wgpu = "0.5"
 shaderc = "0.6"

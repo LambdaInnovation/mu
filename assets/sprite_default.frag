@@ -9,6 +9,6 @@ layout(location=1) in vec4 f_color;
 layout(location=0) out vec4 frag_color;
 
 void main() {
-    frag_color = f_color * texture(u_texture, f_uv);
+    frag_color = f_color * texture(sampler2D(u_texture, u_sampler), f_uv);
 //    frag_color=vec4(1,1,1,1);
 }

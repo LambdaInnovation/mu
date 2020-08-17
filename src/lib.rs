@@ -323,7 +323,7 @@ impl InitContext {
 /// Data when just before game starts. Usually used to setup the world initial entities.
 pub struct StartContext<'a> {
     pub world: &'a mut specs::World,
-    pub wgpu_state: Rc<RefCell<WgpuState>>
+    pub wgpu_state: WgpuStateCell
 }
 
 /// Modules inject into the game's startup process, and are

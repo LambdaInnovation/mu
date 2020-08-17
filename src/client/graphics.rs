@@ -50,6 +50,12 @@ impl HasVertexFormat for [f32; 3] {
     }
 }
 
+impl HasVertexFormat for [f32; 4] {
+    fn format() -> wgpu::VertexFormat {
+        wgpu::VertexFormat::Float4
+    }
+}
+
 pub fn __vertex_format<T>(_: &Option<&T>) -> wgpu::VertexFormat where T: HasVertexFormat {
     T::format()
 }
@@ -96,9 +102,9 @@ macro_rules! impl_vertex {
             }
 
         }
-    }
+    };
     ($struct_name:ident, $($field_name:ident => $field_location:expr), +) => {
-        impl_vertex!($struct_name, Vertex, $($field_name => $field_location),+);
+        $crate::impl_vertex!($struct_name, Vertex, $($field_name => $field_location),+);
     }
 }
 
@@ -228,7 +234,7 @@ impl ShaderProgram {
 
     pub fn fragment_desc(&self) -> wgpu::ProgrammableStageDescriptor {
         wgpu::ProgrammableStageDescriptor {
-            module: &self.vertex,
+            module: &self.fragment,
             entry_point: "main"
         }
     }
@@ -434,8 +440,8 @@ pub enum UniformPropertyType {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct UniformPropertyBinding (
-    String,
-    UniformPropertyType
+    pub String,
+    pub UniformPropertyType
 );
 
 pub enum UniformProperty {
@@ -513,8 +519,8 @@ impl Material {
     }
 
     pub fn set(&mut self, name: &str, p: MatProperty) {
-        assert!(self.properties.contains_key(&name), "Can't add non-existent property");
-        self.properties[name] = p;
+        assert!(self.properties.contains_key(name), "Can't add non-existent property");
+        self.properties.insert(name.to_string(), p);
         self.mark_dirty();
     }
 
@@ -543,6 +549,7 @@ impl Material {
         for (idx, elem) in layout.iter().enumerate() {
             match &elem.ty {
                 UniformBindingType::Sampler | UniformBindingType::Texture => {
+                    // info!("Add Property {}", elem.name);
                     if elem.name.len() > 0 {
                         mapping.insert(elem.name.clone(), FillKey::Property(idx));
                     }
@@ -551,9 +558,8 @@ impl Material {
                     assert_eq!(elem.name.len(), 0, "DataBlock name is useless: {}", elem.name);
                     let mut sum = 0;
                     for (idx2, mem) in members.iter().enumerate() {
-                        if elem.name.len() > 0 {
-                            mapping.insert(elem.name.clone(), FillKey::DataBlock(idx, idx2, sum));
-                        }
+                        // info!("Add {}", mem.0);
+                        mapping.insert(mem.0.clone(), FillKey::DataBlock(idx, idx2, sum));
                         sum += mem.1.element_count();
                     }
                 }
@@ -588,7 +594,7 @@ impl Material {
                 },
                 FillKey::DataBlock(ix, ix2, offset) => {
                     if let FillEntry::DataBlock(_, floats, flags, _) = &mut data_vec[*ix] {
-                        *flags = *flags | (1 << ix2 as u32);
+                        *flags = *flags | (1 << (*ix2) as u32);
 
                         let slice = &mut floats.as_mut_slice()[*offset..];
                         match v {
@@ -617,9 +623,13 @@ impl Material {
             }
         }
 
-        for v in &mut data_vec {
+        for (i, v) in data_vec.iter_mut().enumerate() {
             if let FillEntry::DataBlock(_, floats, flags, buf) = v {
-                assert_eq!(*flags, (1 << (floats.len() + 1)) - 1, "DataBlock not filled");
+                let count = match &layout[i].ty {
+                    UniformBindingType::DataBlock { members } => members.len(),
+                    _ => panic!()
+                };
+                assert_eq!(*flags, (1 << count) - 1, "DataBlock not filled");
                 *buf = Some(device.create_buffer_with_data(
                     bytemuck::cast_slice(floats),
                     wgpu::BufferUsage::UNIFORM

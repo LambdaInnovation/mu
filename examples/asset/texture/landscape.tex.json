@@ -1,4 +1,6 @@
 {
   "image": "landscape.png",
-  "filter": "Blinear"
+  "sampler": {
+    "filter": "Bilinear"
+  }
 }

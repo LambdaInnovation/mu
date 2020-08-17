@@ -1,6 +1,6 @@
 use mu::*;
+use mu::*;
 use mu::math;
-use mu::{RuntimeBuilder, Module, InsertInfo, WgpuStateCell, InitContext, StartContext};
 use mu::client::graphics::*;
 use specs::prelude::*;
 use mu::ecs::{Transform, Time};
@@ -50,17 +50,6 @@ impl DrawQuadSystem {
         ];
 
         let texture_view = texture.raw_texture.create_default_view();
-        let sampler = wgpu_state.device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            lod_min_clamp: -100.,
-            lod_max_clamp: 100.,
-            compare: wgpu::CompareFunction::Always
-        });
 
         let vbo = wgpu_state.device.create_buffer_with_data(bytemuck::cast_slice(&quad),
                                                             wgpu::BufferUsage::VERTEX);
@@ -90,7 +79,7 @@ impl DrawQuadSystem {
                 },
                 wgpu::Binding {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&sampler)
+                    resource: wgpu::BindingResource::Sampler(&texture.sampler)
                 },
             ],
             label: None

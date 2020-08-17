@@ -1,4 +1,7 @@
 {
   "image": "test_grid.png",
-  "filter": "Blinear"
+  "filter": "Blinear",
+  "sampler": {
+    "filter": "Bilinear"
+  }
 }
