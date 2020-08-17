@@ -60,7 +60,7 @@ pub fn __size_of<T>(_: &Option<&T>) -> wgpu::BufferAddress {
 
 #[macro_export]
 macro_rules! impl_vertex {
-    ($struct_name:ident, $($field_name:ident => $field_location:expr), +) => {
+    ($struct_name:ident, $step_mode:ident, $($field_name:ident => $field_location:expr), +) => {
         unsafe impl $crate::bytemuck::Pod for $struct_name {}
         unsafe impl $crate::bytemuck::Zeroable for $struct_name {}
 
@@ -72,7 +72,7 @@ macro_rules! impl_vertex {
 
                 wgpu::VertexBufferDescriptor {
                     stride: size_of::<$struct_name>() as wgpu::BufferAddress,
-                    step_mode: $crate::wgpu::InputStepMode::Vertex,
+                    step_mode: $crate::wgpu::InputStepMode::$step_mode,
                     attributes: &v
                 }
             }
@@ -96,6 +96,9 @@ macro_rules! impl_vertex {
             }
 
         }
+    }
+    ($struct_name:ident, $($field_name:ident => $field_location:expr), +) => {
+        impl_vertex!($struct_name, Vertex, $($field_name => $field_location),+);
     }
 }
 
@@ -212,6 +215,24 @@ pub struct ShaderProgram {
     pub fragment: wgpu::ShaderModule,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub layout_config: Vec<UniformLayoutConfig>
+}
+
+impl ShaderProgram {
+
+    pub fn vertex_desc(&self) -> wgpu::ProgrammableStageDescriptor {
+        wgpu::ProgrammableStageDescriptor {
+            module: &self.vertex,
+            entry_point: "main"
+        }
+    }
+
+    pub fn fragment_desc(&self) -> wgpu::ProgrammableStageDescriptor {
+        wgpu::ProgrammableStageDescriptor {
+            module: &self.vertex,
+            entry_point: "main"
+        }
+    }
+
 }
 
 pub fn load_shader(device: &wgpu::Device, path: &str) -> ShaderProgram {
@@ -491,9 +512,9 @@ impl Material {
         &self.bind_group
     }
 
-    pub fn set(&mut self, name: String, p: MatProperty) {
+    pub fn set(&mut self, name: &str, p: MatProperty) {
         assert!(self.properties.contains_key(&name), "Can't add non-existent property");
-        self.properties.insert(name, p);
+        self.properties[name] = p;
         self.mark_dirty();
     }
 

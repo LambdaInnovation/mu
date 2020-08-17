@@ -107,7 +107,7 @@ impl DrawTriangleSystem {
                 depth_stencil_state: None,
                 vertex_state: wgpu::VertexStateDescriptor {
                     index_format: wgpu::IndexFormat::Uint16,
-                    vertex_buffers: &[get_vertex![TriangleVertex]]
+                    vertex_buffers: &[get_vertex!(TriangleVertex)]
                 },
                 sample_count: 1,
                 sample_mask: !0,

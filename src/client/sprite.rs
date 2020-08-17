@@ -184,8 +184,8 @@ struct SpriteInstanceData {
     i_color: [f32; 4]
 }
 
-impl_vertex!(SpriteInstanceData,
-    i_mat_col0 => 2, i_mat_col1 => 3, i_mat_col2 => 4, i_mat_col4 = 5,
+impl_vertex!(SpriteInstanceData, Instance,
+    i_mat_col0 => 2, i_mat_col1 => 3, i_mat_col2 => 4, i_mat_col3 => 5,
     i_uv_min => 6, i_uv_max => 7, i_color => 8);
 
 #[derive(Copy, Clone)]
@@ -198,12 +198,13 @@ struct SpriteRenderSystem {
     ibo: wgpu::Buffer,
     sprite_program: ResourceRef<ShaderProgram>,
     wgpu_state: WgpuStateCell,
-    material: Option<Material>
+    material: Option<Material>,
+    pipeline: wgpu::RenderPipeline
 }
 
 impl SpriteRenderSystem {
 
-    pub fn new(wgpu_state_cell: WgpuStateCell) -> Self {
+    pub fn new(res_mgr: &mut ResManager, wgpu_state_cell: WgpuStateCell) -> Self {
         let wgpu_state = wgpu_state_cell.borrow();
         let vert = include_str!("../../assets/sprite_default.vert");
         let frag = include_str!("../../assets/sprite_default.frag");
@@ -236,6 +237,7 @@ impl SpriteRenderSystem {
                },
            ]);
         let program_ref = res_mgr.add(program);
+        let program = res_mgr.get(&program_ref);
 
         let vertices = [
             SpriteVertex::new(-0.5, -0.5, 0., 0.),
@@ -254,6 +256,34 @@ impl SpriteRenderSystem {
             wgpu::BufferUsage::INDEX
         );
 
+        let pipeline_layout = wgpu_state.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            bind_group_layouts: &[&program.bind_group_layout]
+        });
+
+        let pipeline = wgpu_state.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            layout: &pipeline_layout,
+            vertex_stage: program.vertex_desc(),
+            fragment_stage: Some(program.fragment_desc()),
+            rasterization_state: None,
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            color_states: &[
+                wgpu::ColorStateDescriptor {
+                    format: wgpu_state.sc_desc.format,
+                    alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                    color_blend: wgpu::BlendDescriptor::REPLACE,
+                    write_mask: wgpu::ColorWrite::ALL
+                }
+            ],
+            depth_stencil_state: None,
+            vertex_state: wgpu::VertexStateDescriptor {
+                index_format: wgpu::IndexFormat::Uint16,
+                vertex_buffers: &[get_vertex!(SpriteVertex), get_vertex!(SpriteInstanceData)]
+            },
+            sample_count: 1,
+            sample_mask: !0,
+            alpha_to_coverage_enabled: false
+        });
+
         drop(wgpu_state);
 
         Self {
@@ -261,7 +291,8 @@ impl SpriteRenderSystem {
             ibo,
             sprite_program: program_ref,
             wgpu_state: wgpu_state_cell,
-            material: None
+            material: None,
+            pipeline
         }
     }
 
@@ -307,15 +338,16 @@ impl SpriteRenderSystem {
             for cam in camera_infos {
                 let wvp_mat: [f32; 16] = cam.wvp_matrix.into();
 
-                let material = match &self.material {
+                let material = match &mut self.material {
                     Some(mat) => {
-
+                        mat.set("u_texture", MatProperty::Texture(sheet.texture.clone()));
+                        mat.set("u_sampler", MatProperty::TextureSampler(sheet.texture.clone()));
                     },
                     None => {
                         let mut properties = HashMap::new();
                         properties.insert("u_proj".to_string(), MatProperty::Mat4(cam.wvp_matrix));
                         properties.insert("u_texture".to_string(), MatProperty::Texture(sheet.texture.clone()));
-                        properties.insert("u_sampler".to_string(), MatProperty::)
+                        properties.insert("u_sampler".to_string(), MatProperty::TextureSampler(sheet.texture.clone()));
                         self.material = Some(Material::create(
                             res_mgr,
                             &*wgpu_state,
@@ -323,7 +355,7 @@ impl SpriteRenderSystem {
                             properties
                         ))
                     }
-                }
+                };
 
                 let texture = res_mgr.get(&sheet.texture);
                 let uniforms = glium::uniform! {
