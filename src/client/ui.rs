@@ -1,14 +1,10 @@
 use std::rc::Rc;
 
 use cgmath::SquareMatrix;
-use glium;
-use glium::{Display, IndexBuffer, Program, Surface, VertexBuffer};
-use glium::index::PrimitiveType;
 use specs::prelude::*;
 use specs_hierarchy::Hierarchy;
 
-use crate::{InitData, InsertInfo, Module, StartData};
-use crate::asset::ResourceRef;
+use crate::*;
 use crate::client::graphics::{Material, Texture};
 use crate::client::input::RawInputData;
 use crate::client::sprite::SpriteRef;
@@ -16,6 +12,7 @@ use crate::client::WindowInfo;
 use crate::ecs::HasParent;
 use crate::math::*;
 use crate::util::Color;
+use crate::resource::ResourceRef;
 
 // UI axis: x+ right; y+ up
 
@@ -206,29 +203,28 @@ impl Component for Image {
 pub struct UIModule;
 
 impl Module for UIModule {
-    fn init(&self, init_data: &mut InitData) {
+    fn init(&self, init_ctx: &mut InitContext) {
         use super::graphics;
         // 这个其实不用insert到thread local，但是执行依赖关系不好处理
-        init_data.group_thread_local.dispatch(
-            InsertInfo::new("ui_layout").before(&[&graphics::DEP_RENDER_SETUP]),
-            |i| i.insert_thread_local(internal::UIUpdateSystem {})
+        init_ctx.group_thread_local.dispatch(
+            InsertInfo::new("ui_layout").before(&[graphics::DEP_CAM_DRAW_SETUP]),
+            |_, i| i.insert_thread_local(internal::UIUpdateSystem {})
         );
 
-        init_data.group_thread_local.dispatch(
+        init_ctx.group_thread_local.dispatch(
             InsertInfo::new("ui_images").after(&["ui_layout"]).before(&["ui_render"]),
-            |i| i.insert_thread_local(internal::UIImageBatchSystem {})
+            |_, i| i.insert_thread_local(internal::UIImageBatchSystem {})
         );
 
-        let display_rc = init_data.display.clone();
-        init_data.group_thread_local.dispatch(
+        init_ctx.group_thread_local.dispatch(
             InsertInfo::new("ui_render")
-                .after(&[graphics::DEP_RENDER_SETUP]).before(&[graphics::DEP_RENDER_TEARDOWN])
+                .after(&[graphics::DEP_CAM_DRAW_SETUP]).before(&[graphics::DEP_CAM_DRAW_TEARDOWN])
                 .order(graphics::render_order::UI),
-            |i| i.insert_thread_local(internal::UIRenderSystem::new(display_rc))
+            |d, i| i.insert_thread_local(internal::UIRenderSystem::new(d))
         );
     }
 
-    fn start(&self, start_data: &mut StartData) {
+    fn start(&self, start_data: &mut StartContext) {
         start_data.world.insert(WidgetEvents { events: vec![] });
     }
 }
@@ -236,6 +232,10 @@ impl Module for UIModule {
 mod internal {
     use crate::client::input::ButtonState;
     use super::*;
+    use crate::{WgpuState, WgpuStateCell};
+    use crate::client::graphics::{UniformLayoutConfig, UniformBindingType, UniformVisibility, SamplerConfig, FilterMode, ShaderProgram, MatProperty};
+    use crate::resource::ResManager;
+    use std::collections::HashMap;
 
     // #[derive(Default)]
     pub struct WidgetRuntimeInfo {
@@ -537,17 +537,22 @@ mod internal {
         }
     }
 
-    glium::implement_vertex!(ImageVertex, v_pos, v_uv);
+    impl_vertex!(ImageVertex, v_pos => 0, v_uv => 1);
 
     #[derive(Copy, Clone, Default)]
     struct ImageInstanceData {
-        i_wvp: [[f32; 4]; 4],
+        i_wvp_c0: [f32; 4],
+        i_wvp_c1: [f32; 4],
+        i_wvp_c2: [f32; 4],
+        i_wvp_c3: [f32; 4],
         i_uv_min: [f32; 2],
         i_uv_max: [f32; 2],
         i_color: [f32; 4]
     }
 
-    glium::implement_vertex!(ImageInstanceData, i_wvp, i_uv_min, i_uv_max, i_color);
+    impl_vertex!(ImageInstanceData, Instance,
+        i_wvp_c0 => 2, i_wvp_c1 => 3, i_wvp_c2 => 4, i_wvp_c3 => 5,
+        i_uv_min => 6, i_uv_max => 7, i_color => 8);
 
     impl<'a> System<'a> for UIImageBatchSystem {
         type SystemData = (
@@ -575,111 +580,192 @@ mod internal {
     }
 
     struct UIImageRenderData {
-        default_program: ResourceRef<Program>,
-        vbo: VertexBuffer<ImageVertex>,
-        ibo: IndexBuffer<u16>,
+        default_program: ResourceRef<ShaderProgram>,
+        default_material: Material,
+        default_pipeline: wgpu::RenderPipeline,
+        vbo: wgpu::Buffer,
+        ibo: wgpu::Buffer,
         white_texture: ResourceRef<Texture>
     }
 
     impl UIImageRenderData {
 
-        fn new(display: &Display) -> Self {
+        fn new(res_mgr: &mut ResManager, wgpu_state: &WgpuState) -> Self {
             use crate::client::graphics;
-            let program = graphics::load_shader_by_content(display,
-                                                           include_str!("../../assets/ui_image_default.vert"),
-                                                           include_str!("../../assets/ui_image_default.frag"));
+            let program = graphics::load_shader_by_content(&wgpu_state.device,
+               include_str!("../../assets/ui_image_default.vert"),
+               include_str!("../../assets/ui_image_default.frag"),
+                "ui_image_default.vert",
+                "ui_image_default.frag",
+            &[
+                UniformLayoutConfig {
+                    binding: 0,
+                    name: "u_texture".to_string(),
+                    ty: UniformBindingType::Texture,
+                    visibility: UniformVisibility::Fragment
+                },
+                UniformLayoutConfig {
+                    binding: 1,
+                    name: "u_sampler".to_string(),
+                    ty: UniformBindingType::Sampler,
+                    visibility: UniformVisibility::Fragment
+                }
+            ]);
+            let program = res_mgr.add(program);
 
-            let vbo = VertexBuffer::new(display, &[
-                ImageVertex::new(0., 0., 0., 0.),
-                ImageVertex::new(0., 1., 0., 1.),
-                ImageVertex::new(1., 1., 1., 1.),
-                ImageVertex::new(1., 0., 1., 0.)
-            ]).unwrap();
+            let vbo = wgpu_state.device.create_buffer_with_data(bytemuck::cast_slice(&[
+                    ImageVertex::new(0., 0., 0., 0.),
+                    ImageVertex::new(0., 1., 0., 1.),
+                    ImageVertex::new(1., 1., 1., 1.),
+                    ImageVertex::new(1., 0., 1., 0.)
+                ]),
+                wgpu::BufferUsage::VERTEX);
 
-            let ibo = IndexBuffer::new(
-                display,
-                PrimitiveType::TrianglesList,
-                &[0u16, 1, 2, 0, 2, 3]).unwrap();
+            let ibo = wgpu_state.device.create_buffer_with_data(
+                bytemuck::cast_slice(&[0u16, 1, 2, 0, 2, 3]),
+                wgpu::BufferUsage::INDEX
+            );
 
-            let white_texture = graphics::create_texture(display, vec![255, 255, 255, 255], (1, 1));
+            let white_texture = res_mgr.add(graphics::create_texture(
+                wgpu_state, vec![255, 255, 255, 255], (1, 1), &SamplerConfig {
+                    address: wgpu::AddressMode::ClampToEdge,
+                    filter: FilterMode::Nearest
+                }));
+
+            let mut properties = HashMap::new();
+            properties.insert("u_texture".to_string(), MatProperty::Texture(white_texture.clone()));
+            properties.insert("u_sampler".to_string(), MatProperty::TextureSampler(white_texture.clone()));
+
+            let default_mat = Material::create(&res_mgr, wgpu_state, program.clone(), properties);
+
+            let program_inst = res_mgr.get(&program);
+
+            let pipeline_layout = wgpu_state.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                bind_group_layouts: &[&program_inst.bind_group_layout]
+            });
+            
+            let pipeline = wgpu_state.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                layout: &pipeline_layout,
+                vertex_stage: program_inst.vertex_desc(),
+                fragment_stage: Some(program_inst.fragment_desc()),
+                rasterization_state: None,
+                primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+                color_states: &[wgpu::ColorStateDescriptor {
+                    format: wgpu_state.sc_desc.format,
+                    alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                    color_blend: wgpu::BlendDescriptor::REPLACE,
+                    write_mask: wgpu::ColorWrite::ALL
+                }],
+                depth_stencil_state: None,
+                vertex_state: wgpu::VertexStateDescriptor {
+                    index_format: wgpu::IndexFormat::Uint16,
+                    vertex_buffers: &[get_vertex!(ImageVertex), get_vertex!(ImageInstanceData)]
+                },
+                sample_count: 1,
+                sample_mask: !0,
+                alpha_to_coverage_enabled: false
+            });
 
             Self {
                 default_program: program,
                 vbo, ibo,
-                white_texture
+                white_texture,
+                default_material: default_mat,
+                default_pipeline: pipeline
             }
         }
     }
 
     pub struct UIRenderSystem {
         image_data: UIImageRenderData,
-        display: Rc<Display>
+        wgpu_state: WgpuStateCell
     }
 
     impl UIRenderSystem {
 
-        pub fn new(display: Rc<Display>) -> Self {
+        pub fn new(init_data: &mut InitData) -> Self {
+            let wgpu_state = init_data.wgpu_state.borrow();
+            let image_data = UIImageRenderData::new(&mut init_data.res_mgr, &*wgpu_state);
             Self {
-                image_data: UIImageRenderData::new(&display),
-                display
+                image_data,
+                wgpu_state: init_data.wgpu_state.clone()
             }
         }
 
     }
 
     impl<'a> System<'a> for UIRenderSystem {
-        type SystemData = WriteStorage<'a, Canvas>;
+        type SystemData = (ReadExpect<'a, ResManager>, WriteStorage<'a, Canvas>);
 
-        fn run(&mut self, mut data: Self::SystemData) {
+        fn run(&mut self, (res_mgr, mut canvas_write): Self::SystemData) {
             use crate::client::graphics;
-            use crate::asset;
 
-            graphics::with_render_data(|f| {
-                asset::with_local_resource_mgr(|res_mgr| {
-                    let image_data = &self.image_data;
-                    let img_default_program = res_mgr.get(&image_data.default_program);
-                    let img_white_texture = res_mgr.get(&self.image_data.white_texture);
-                    for canvas in (&mut data).join() {
-                        let draw_calls = canvas.batcher.finish();
-                        for draw in draw_calls {
-                            match draw {
-                                DrawInstance::Image {
-                                    wvp, sprite, material, color
-                                } => {
-                                    let program = img_default_program;
-                                    let (texture, uv0, uv1) = match &sprite {
-                                        Some(sr) => {
-                                            let sheet = res_mgr.get(&sr.sheet);
-                                            let texture = res_mgr.get(&sheet.texture);
-                                            let spr_data = &sheet.sprites[sr.idx];
-                                            (texture, spr_data.uv_min, spr_data.uv_max)
-                                        }
-                                        None => {
-                                            (img_white_texture, vec2(0., 0.), vec2(1., 1.))
-                                        }
-                                    };
-                                    let uniform_block = glium::uniform! {
-                                    u_texture: &texture.raw_texture
-                                };
-
-                                    let instance_buf = VertexBuffer::new(&*self.display, &[ImageInstanceData {
-                                        i_wvp: wvp.into(),
-                                        i_uv_min: [uv0.x, uv0.y],
-                                        i_uv_max: [uv1.x, uv1.y],
-                                        i_color: color.into()
-                                    }]).unwrap();
-
-                                    f.frame.draw((&image_data.vbo, instance_buf.per_instance().unwrap()),
-                                                 &image_data.ibo,
-                                                 program, &uniform_block,
-                                                 &Default::default()).unwrap();
-                                },
-                                _ => unimplemented!()
-                            }
-                        }
-                    }
-                });
+            let wgpu_state = self.wgpu_state.borrow();
+            let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: None
             });
+            for canvas in (&mut canvas_write).join() {
+                let draw_calls = canvas.batcher.finish();
+                for draw in draw_calls {
+                    match draw {
+                        DrawInstance::Image {
+                            wvp, sprite, material, color
+                        } => {
+                            // TODO: Support custom material
+                            let image_data = &mut self.image_data;
+                            let (texture, uv0, uv1) = match &sprite {
+                                Some(sr) => {
+                                    let sheet = res_mgr.get(&sr.sheet);
+                                    let spr_data = &sheet.sprites[sr.idx];
+                                    (sheet.texture.clone(), spr_data.uv_min, spr_data.uv_max)
+                                }
+                                None => {
+                                    (image_data.white_texture.clone(), vec2(0., 0.), vec2(1., 1.))
+                                }
+                            };
+
+                            image_data.default_material.set("u_texture", MatProperty::Texture(texture.clone()));
+                            image_data.default_material.set("u_sampler", MatProperty::TextureSampler(texture));
+
+                            let instances = [ImageInstanceData {
+                                i_wvp_c0: wvp.x.into(),
+                                i_wvp_c1: wvp.y.into(),
+                                i_wvp_c2: wvp.z.into(),
+                                i_wvp_c3: wvp.w.into(),
+                                i_uv_min: [uv0.x, uv0.y],
+                                i_uv_max: [uv1.x, uv1.y],
+                                i_color: color.into(),
+                            }];
+                            let instance_buf = wgpu_state.device.create_buffer_with_data(
+                                bytemuck::cast_slice(&instances),
+                                wgpu::BufferUsage::VERTEX
+                            );
+                            
+                            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                                    attachment: &wgpu_state.frame_texture.as_ref().unwrap().view,
+                                    resolve_target: None,
+                                    load_op: wgpu::LoadOp::Load,
+                                    store_op: wgpu::StoreOp::Store,
+                                    clear_color: Default::default()
+                                }],
+                                depth_stencil_attachment: None
+                            });
+
+                            let bind_group = image_data.default_material.get_bind_group(&*res_mgr, &wgpu_state.device);
+                            render_pass.set_pipeline(&image_data.default_pipeline);
+                            render_pass.set_bind_group(0, &bind_group, &[]);
+                            render_pass.set_vertex_buffer(0, &image_data.vbo, 0, 0);
+                            render_pass.set_vertex_buffer(1, &instance_buf, 0, 0);
+                            render_pass.set_index_buffer(&image_data.ibo, 0, 0);
+                            render_pass.draw_indexed(0..6, 0, 0..1);
+                        },
+                        _ => unimplemented!()
+                    }
+                }
+            }
+
+            wgpu_state.queue.submit(&[encoder.finish()]);
         }
     }
 }

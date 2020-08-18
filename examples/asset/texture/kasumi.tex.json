@@ -1,0 +1,6 @@
+{
+  "image": "kasumi.png",
+  "sampler": {
+    "filter": "Bilinear"
+  }
+}

@@ -262,7 +262,7 @@ pub struct InitData {
 pub struct InitContext {
     group_normal: DispatchGroup<DispatchItem>,
     group_thread_local: DispatchGroup<ThreadLocalDispatchItem>,
-    init_data: InitData
+    pub init_data: InitData
 }
 
 impl InitContext {

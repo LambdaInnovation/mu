@@ -1,0 +1,21 @@
+{
+  "texture": "kasumi.tex.json",
+  "ppu": 256,
+  "sprites": [
+    {
+      "name": "Default",
+      "pos": {
+        "x": 128,
+        "y": 128
+      },
+      "size": {
+        "x": 256,
+        "y": 256
+      },
+      "pivot": {
+        "x": 0.5,
+        "y": 0.5
+      }
+    }
+  ]
+}

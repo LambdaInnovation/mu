@@ -318,8 +318,8 @@ pub enum FilterMode {
 #[derive(Serialize, Deserialize)]
 pub struct SamplerConfig {
     #[serde(default)]
-    address: wgpu::AddressMode,
-    filter: FilterMode
+    pub address: wgpu::AddressMode,
+    pub filter: FilterMode
 }
 
 fn create_sampler_from_config(device: &wgpu::Device, cfg: &SamplerConfig) -> wgpu::Sampler {
