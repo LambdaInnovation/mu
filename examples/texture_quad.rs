@@ -1,5 +1,4 @@
 use mu::*;
-use mu::*;
 use mu::math;
 use mu::client::graphics::*;
 use specs::prelude::*;

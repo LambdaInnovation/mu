@@ -1,12 +1,10 @@
 use mu::*;
 use mu::client::graphics::*;
 use mu::client::sprite::*;
-use mu::asset::*;
 use mu::resource::*;
 use specs::{WorldExt, Builder};
 use mu::ecs::Transform;
 use mu::util::Color;
-use std::borrow::Borrow;
 
 struct MyModule;
 

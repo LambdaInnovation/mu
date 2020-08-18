@@ -89,14 +89,15 @@ macro_rules! impl_vertex {
 
                 $(
                     let field_opt = None::<&$struct_name>.map(|v| &v.$field_name);
+                    let len = $crate::client::graphics::__size_of(&field_opt);
+                    bytes_sum += len;
                     attrs.push($crate::wgpu::VertexAttributeDescriptor {
-                        offset: bytes_sum,
+                        offset: bytes_sum - len,
                         shader_location: $field_location,
                         format: {
                             $crate::client::graphics::__vertex_format(&field_opt)
                         }
                     });
-                    bytes_sum += $crate::client::graphics::__size_of(&field_opt);
                 )+
                 attrs
             }
