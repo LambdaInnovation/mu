@@ -8,7 +8,7 @@ use mu::ecs::HasParent;
 use mu::math::{vec2};
 use mu::util::Color;
 use mu::client::sprite::*;
-use mu::resource::{ResourceRef, ResManager};
+use mu::resource::*;
 
 struct TestDialogComponent {
     btn_ok: Entity

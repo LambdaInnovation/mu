@@ -1,6 +1,4 @@
-use std::rc::Rc;
 
-use cgmath::SquareMatrix;
 use specs::prelude::*;
 use specs_hierarchy::Hierarchy;
 
@@ -101,7 +99,7 @@ enum WidgetCursorState {
 pub struct Widget {
     pub scl: Vec2,
     pub pivot: Vec2,
-    pub rot: f32,
+    pub rot: Deg,
     pub layout_x: LayoutType,
     pub layout_y: LayoutType,
     pub raycast: bool,
@@ -118,7 +116,7 @@ impl Widget {
         Widget {
             scl: vec2(1., 1.),
             pivot: vec2(0.5, 0.5),
-            rot: 0.,
+            rot: deg(0.),
             layout_x: LayoutType::Normal { align: AlignType::Middle, pos: 0.0, len: 100. },
             layout_y: LayoutType::Normal { align: AlignType::Middle, pos: 0.0, len: 100. },
             runtime_info: internal::WidgetRuntimeInfo::new(),
@@ -233,7 +231,7 @@ mod internal {
     use crate::client::input::ButtonState;
     use super::*;
     use crate::{WgpuState, WgpuStateCell};
-    use crate::client::graphics::{UniformLayoutConfig, UniformBindingType, UniformVisibility, SamplerConfig, FilterMode, ShaderProgram, MatProperty};
+    use crate::client::graphics::*;
     use crate::resource::ResManager;
     use std::collections::HashMap;
 
@@ -282,10 +280,15 @@ mod internal {
         }
     }
 
-    fn calc_widget_mat(offset: Vec2, scl: Vec2, rot: f32) -> Mat3 {
-        let translation_mat = mat3::translate(offset);
-        // TODO: 支持scl和rot
-        translation_mat
+    fn calc_widget_mat(offset: Vec2, scl: Vec2, rot: Deg) -> Mat3 {
+        let mut result = mat3::translate(offset);
+        if !approx_eq(rot.0, 0.) {
+            result = result * mat3::rotate_around(offset, rot);
+        }
+        if !vec2_approx_eq(scl, vec2(1., 1.)) {
+            result = result * mat3::scale_around(offset, scl);
+        }
+        result
     }
 
     pub struct UICursorData {
@@ -486,7 +489,6 @@ mod internal {
 
 
     struct ImageBatchContext<'a, 'b> {
-        entities: &'a Entities<'b>,
         hierarchy: &'a Hierarchy<HasParent>,
         widget_vec: &'a ReadStorage<'b, Widget>,
         image_read: &'a ReadStorage<'b, Image>,
@@ -564,7 +566,6 @@ mod internal {
         fn run(&mut self, (mut canvas, entities, hierarchy, widget_storage, image_storage): Self::SystemData) {
             for (ent, canvas) in (&entities, &mut canvas).join() {
                 let mut ctx = ImageBatchContext {
-                    entities: &entities,
                     hierarchy: &hierarchy,
                     widget_vec: &widget_storage,
                     image_read: &image_storage,
@@ -696,8 +697,6 @@ mod internal {
         type SystemData = (ReadExpect<'a, ResManager>, WriteStorage<'a, Canvas>);
 
         fn run(&mut self, (res_mgr, mut canvas_write): Self::SystemData) {
-            use crate::client::graphics;
-
             let wgpu_state = self.wgpu_state.borrow();
             let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: None
@@ -707,7 +706,7 @@ mod internal {
                 for draw in draw_calls {
                     match draw {
                         DrawInstance::Image {
-                            wvp, sprite, material, color
+                            wvp, sprite, material: _material, color
                         } => {
                             // TODO: Support custom material
                             let image_data = &mut self.image_data;

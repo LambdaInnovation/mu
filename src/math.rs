@@ -4,10 +4,11 @@ use std::f32::consts;
 use std::ops::{Div, Mul, Sub, Add};
 use serde::{Serialize, Deserialize};
 
-pub use cgmath::num_traits::*;
-
 /// ! Many structs in cgmath crate is used by Mu::math, so we provide direct access here.
 pub use cgmath;
+pub use cgmath::{
+    SquareMatrix, One
+};
 
 pub type Float = f32;
 
@@ -22,6 +23,7 @@ pub type Quaternion = cgmath::Quaternion<Float>;
 pub type Rotation3 = cgmath::Basis3<Float>;
 
 pub type Deg = cgmath::Deg<Float>;
+pub type Rad = cgmath::Rad<Float>;
 pub type Euler = cgmath::Euler<Deg>;
 pub type Perspective = cgmath::PerspectiveFov<Float>;
 
@@ -58,8 +60,9 @@ pub fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
 // Currently same as unity, maybe can be better?
 #[inline]
 pub fn approx_eq(lhs: f32, rhs: f32) -> bool {
-    let delta = abs(rhs - lhs);
-    delta < f32::max(f32::EPSILON * 8., 1e-6 * f32::max(abs(lhs), abs(rhs)))
+    let delta = (rhs - lhs).abs();
+    delta < f32::max(f32::EPSILON * 8., 1e-6 *
+        f32::max(lhs.abs(), rhs.abs()))
 }
 
 #[inline]
@@ -146,6 +149,7 @@ impl Rect {
 
 pub mod mat3 {
     use super::*;
+    use cgmath::Angle;
 
     #[inline]
     pub fn extend_to_mat4(m: &Mat3) -> Mat4 {
@@ -192,13 +196,41 @@ pub mod mat3 {
         )
     }
 
-    // pub fn rotate_around(p: Vec2, angle: Deg) -> Mat3 {
-    //     unimplemented!();
-    // }
-    //
-    // pub fn scale_around(p: Vec2, scl: Vec2) -> Mat3 {
-    //     unimplemented!();
-    // }
+    pub fn rotate_around(p: Vec2, angle: Deg) -> Mat3 {
+        let c = Angle::cos(angle);
+        let s = Angle::sin(angle);
+        let dx = p.x;
+        let dy = p.y;
+
+        let c0r0 = c;
+        let c1r0 = -s;
+        let c2r0 = dx - dx * c + dy * s;
+        let c0r1 = s;
+        let c1r1 = c;
+        let c2r1 = dy - dx * s - dy * c;
+        let c0r2 = 0.;
+        let c1r2 = 0.;
+        let c2r2 = 1.;
+
+        Mat3::new(c0r0, c0r1, c0r2, c1r0, c1r1, c1r2, c2r0, c2r1, c2r2)
+    }
+
+    pub fn scale_around(p: Vec2, scl: Vec2) -> Mat3 {
+        let (dx, dy) = (p.x, p.y);
+        let (sx, sy) = (scl.x, scl.y);
+
+        let c0r0 = sx;
+        let c1r0 = 0.;
+        let c2r0 = dx * (1. - sx);
+        let c0r1 = 0.;
+        let c1r1 = sy;
+        let c2r1 = dy * (1. - sy);
+        let c0r2 = 0.;
+        let c1r2 = 0.;
+        let c2r2 = 1.;
+
+        Mat3::new(c0r0, c0r1, c0r2, c1r0, c1r1, c1r2, c2r0, c2r1, c2r2)
+    }
 
     pub fn scale(scl: Vec2) -> Mat3 {
         let c0r0 = scl.x;
