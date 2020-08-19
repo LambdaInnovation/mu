@@ -28,10 +28,15 @@ image = "*"
 futures = "*"
 
 # Client only
+winit = "0.22"
+
+wgpu = "0.5"
+wgpu-types = { version="0.5", features=["serde"] }
+
+shaderc = "0.6"
+
+wgpu_glyph = "0.9"
+
 imgui = "*"
 imgui-winit-support = "*"
 imgui-wgpu = "0.8"
-winit = "0.22"
-wgpu-types = { version="0.5", features=["serde"] }
-wgpu = "0.5"
-shaderc = "0.6"

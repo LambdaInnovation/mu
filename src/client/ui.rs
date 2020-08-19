@@ -1,7 +1,7 @@
-
 use specs::prelude::*;
 use specs_hierarchy::Hierarchy;
 
+use wgpu_glyph::*;
 use crate::*;
 use crate::client::graphics::{Material, Texture};
 use crate::client::input::RawInputData;
@@ -11,6 +11,7 @@ use crate::ecs::HasParent;
 use crate::math::*;
 use crate::util::Color;
 use crate::resource::ResourceRef;
+use std::collections::HashMap;
 
 // UI axis: x+ right; y+ up
 
@@ -196,6 +197,14 @@ impl Image {
 
 impl Component for Image {
     type Storage = VecStorage<Self>;
+}
+
+pub struct Text {
+    pub font: FontId,
+    pub text: String,
+    pub size: f32,
+    pub x_align: AlignType,
+    pub y_align: AlignType
 }
 
 pub struct UIModule;
