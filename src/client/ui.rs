@@ -580,7 +580,6 @@ mod internal {
     }
 
     struct UIImageRenderData {
-        default_program: ResourceRef<ShaderProgram>,
         default_material: Material,
         default_pipeline: wgpu::RenderPipeline,
         vbo: wgpu::Buffer,
@@ -667,7 +666,6 @@ mod internal {
             });
 
             Self {
-                default_program: program,
                 vbo, ibo,
                 white_texture,
                 default_material: default_mat,

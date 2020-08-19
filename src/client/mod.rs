@@ -3,7 +3,7 @@ use winit::event;
 pub mod graphics;
 pub mod input;
 pub mod sprite;
-// pub mod editor;
+pub mod editor;
 pub mod ui;
 
 /// A specs `Resource`. contains information about window.

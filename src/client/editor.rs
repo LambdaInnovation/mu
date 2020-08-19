@@ -1,13 +1,14 @@
-use crate::{Module, InitData, InsertInfo};
+use crate::{Module, InitData, InsertInfo, WgpuStateCell, InitContext};
 use specs::{System, ReadExpect};
 use crate::client::WindowInfo;
 use crate::client::graphics;
-use imgui::{Ui, FontSource, FontConfig};
+use winit;
+use imgui::*;
 use imgui_winit_support::{WinitPlatform, HiDpiMode};
-use glium::Display;
 use std::time::Instant;
 use std::rc::Rc;
-use imgui_glium_renderer::Renderer;
+use winit::window::Window;
+use imgui_wgpu::Renderer;
 
 pub const DEP_SETUP: &str = "editor_setup";
 pub const DEP_TEARDOWN: &str = "editor_teardown";
@@ -30,19 +31,19 @@ pub fn with_frame<F>(f: F)
 struct EditorUISetupSystem {
     platform: WinitPlatform,
     imgui: imgui::Context,
-    display: Rc<Display>,
+    window: Rc<Window>,
     last_frame: Option<Instant>
 }
 
 impl EditorUISetupSystem {
-    fn new(mut imgui: imgui::Context, display: Rc<Display>) -> Self {
+    fn new(mut imgui: imgui::Context, window: Rc<Window>) -> Self {
         let mut platform = WinitPlatform::init(&mut imgui);
-        platform.attach_window(imgui.io_mut(), display.gl_window().window(), HiDpiMode::Default);
+        platform.attach_window(imgui.io_mut(), &*window, HiDpiMode::Default);
 
         Self {
-            display,
             imgui,
             platform,
+            window,
             last_frame: None,
         }
     }
@@ -57,13 +58,13 @@ impl<'a> System<'a> for EditorUISetupSystem {
         for evt in &data.frame_event_list {
             self.platform.handle_event(
                 self.imgui.io_mut(),
-                self.display.gl_window().window(),
+                &*self.window,
                 evt
             );
         }
 
         self.platform
-            .prepare_frame(self.imgui.io_mut(), self.display.gl_window().window())
+            .prepare_frame(self.imgui.io_mut(), &*self.window)
             .expect("Failed to prepare frame!");
 
         let last_frame = match self.last_frame {
@@ -77,7 +78,7 @@ impl<'a> System<'a> for EditorUISetupSystem {
         let mut enable = false;
         ui.show_demo_window(&mut enable);
 
-        self.platform.prepare_render(&ui, self.display.gl_window().window());
+        self.platform.prepare_render(&ui, &*self.window);
 
         unsafe { FRAME = Some(std::mem::transmute::<Ui<'_>, Ui<'static>>(ui)) };
     }
@@ -85,12 +86,19 @@ impl<'a> System<'a> for EditorUISetupSystem {
 
 struct EditorUITeardownSystem {
     renderer: Renderer,
+    wgpu_state: WgpuStateCell
 }
 
 impl EditorUITeardownSystem {
-    pub fn new(context: &mut imgui::Context, display: &Display) -> EditorUITeardownSystem {
-        let renderer = Renderer::init(context, display).expect("Failed to initialize renderer");
-        Self { renderer }
+    pub fn new(context: &mut imgui::Context, wgpu_state_cell: WgpuStateCell) -> EditorUITeardownSystem {
+        let renderer = {
+            let wgpu_state = wgpu_state_cell.borrow();
+            Renderer::new(context, &wgpu_state.device, &wgpu_state.queue, wgpu_state.sc_desc.format, None)
+        };
+        Self {
+            renderer ,
+            wgpu_state: wgpu_state_cell
+        }
     }
 }
 
@@ -102,12 +110,18 @@ impl<'a> System<'a> for EditorUITeardownSystem {
         match ui_opt {
             Some(ui) => {
                 let draw_data = ui.render();
+                let wgpu_state = self.wgpu_state.borrow();
 
-                graphics::with_render_data(|data| {
-                    self.renderer
-                        .render(&mut data.frame, draw_data)
-                        .expect("Rendering imgui failed");
+                let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Mu editor")
                 });
+
+                self.renderer
+                    .render(&draw_data, &wgpu_state.device, &mut encoder,
+                            &wgpu_state.frame_texture.as_ref().unwrap().view)
+                    .expect("Rendering imgui failed");
+
+                wgpu_state.queue.submit(&[encoder.finish()]);
             }
             _ => (),
         }
@@ -117,10 +131,10 @@ impl<'a> System<'a> for EditorUITeardownSystem {
 pub struct EditorModule;
 
 impl Module for EditorModule {
-    fn init(&self, init_data: &mut InitData) {
+    fn init(&self, init_ctx: &mut InitContext) {
         let mut ctx = imgui::Context::create();
         ctx.set_ini_filename(None);
-        let hidpi_factor = init_data.display.gl_window().window().scale_factor();
+        let hidpi_factor = init_ctx.init_data.window.scale_factor();
         let font_size = (13.0 * hidpi_factor) as f32;
 
         ctx.fonts().add_font(&[
@@ -135,25 +149,22 @@ impl Module for EditorModule {
         ctx.io_mut().font_global_scale = (1.0 / hidpi_factor) as f32;
 
         {
-            let insert_info = InsertInfo::new(DEP_TEARDOWN)
-                .after(&[DEP_SETUP])
-                .before(&[graphics::DEP_RENDER_TEARDOWN])
-                .order(graphics::render_order::DEBUG_UI);
-            let sys = EditorUITeardownSystem::new(&mut ctx, &init_data.display);
-            init_data.group_thread_local.dispatch(
+            let insert_info = InsertInfo::new(DEP_TEARDOWN).after(&[DEP_SETUP]);
+            let sys = EditorUITeardownSystem::new(&mut ctx,
+                                                  init_ctx.init_data.wgpu_state.clone());
+            init_ctx.group_thread_local.dispatch(
                 insert_info,
-                move |f| f.insert_thread_local(sys)
+                move |_, f| f.insert_thread_local(sys)
             );
         }
 
         {
             let insert_info = InsertInfo::new(DEP_SETUP)
-                .after(&[graphics::DEP_RENDER_SETUP])
-                .order(graphics::render_order::DEBUG_UI);
-            let sys = EditorUISetupSystem::new(ctx, init_data.display.clone());
-            init_data.group_thread_local.dispatch(
+                .after(&[graphics::DEP_CAM_DRAW_TEARDOWN]);
+            let sys = EditorUISetupSystem::new(ctx, init_ctx.init_data.window.clone());
+            init_ctx.group_thread_local.dispatch(
                 insert_info,
-                |f| f.insert_thread_local(sys));
+                |_, f| f.insert_thread_local(sys));
         }
     }
 }

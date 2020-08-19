@@ -386,7 +386,7 @@ pub fn create_texture(wgpu_state: &WgpuState, rgba_bytes: Vec<u8>, dims: (u32, u
         mip_level_count: 1, // TODO: mipmap
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        format: wgpu::TextureFormat::Rgba8Unorm,
         usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST, // TODO: Read/Write
         label: Some("texture")
     });

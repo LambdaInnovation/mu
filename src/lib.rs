@@ -255,7 +255,8 @@ impl<T: TDispatchItem> DispatchGroup<T> {
 
 pub struct InitData {
     pub wgpu_state: Rc<RefCell<WgpuState>>,
-    pub res_mgr: ResManager
+    pub res_mgr: ResManager,
+    pub window: Rc<Window>
 }
 
 /// Data when game initializes. Usually used to setup all the systems.
@@ -266,13 +267,14 @@ pub struct InitContext {
 }
 
 impl InitContext {
-    pub fn new(res_mgr: ResManager, wgpu_state: Rc<RefCell<WgpuState>>) -> InitContext {
+    pub fn new(res_mgr: ResManager, wgpu_state: Rc<RefCell<WgpuState>>, window: Rc<Window>) -> InitContext {
         InitContext {
             group_normal: DispatchGroup::new(),
             group_thread_local: DispatchGroup::new(),
             init_data: InitData {
                 wgpu_state,
-                res_mgr
+                res_mgr,
+                window
             }
         }
     }
@@ -374,7 +376,8 @@ impl RuntimeBuilder {
         // ======= INIT =======
         let mut dispatcher_builder = specs::DispatcherBuilder::new();
         let res_mgr = ResManager::new();
-        let mut init_data = crate::InitContext::new(res_mgr, client_data.wgpu_state.clone());
+        let mut init_data = crate::InitContext::new(
+            res_mgr, client_data.wgpu_state.clone(), client_data.window.clone());
         let mut world = World::new();
 
         // Default systems
@@ -444,7 +447,7 @@ impl WgpuState {
 
         let sc_desc = wgpu::SwapChainDescriptor {
             usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            format: wgpu::TextureFormat::Bgra8Unorm,
             width: size.width,
             height: size.height,
             present_mode: wgpu::PresentMode::Fifo

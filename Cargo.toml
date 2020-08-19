@@ -28,11 +28,9 @@ image = "*"
 futures = "*"
 
 # Client only
-#glium = "*"
-#glutin = "*"
-#imgui = "*"
-#imgui-glium-renderer = "*"
-#imgui-winit-support = "*"
+imgui = "*"
+imgui-winit-support = "*"
+imgui-wgpu = "0.8"
 winit = "0.22"
 wgpu-types = { version="0.5", features=["serde"] }
 wgpu = "0.5"
