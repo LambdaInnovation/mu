@@ -21,7 +21,8 @@ minimize development friction as much as possible by providing a simple and usab
 
 # 依赖 Dependencies
 
-* Specs for ECS
-* glium for rendering (will replace to wgpu-rs)
-* glutin for window creation
+* specs for ECS
+* wgpu for rendering
+* winit for window creation
+* imgui for editor UI
 * ... TODO: fill-in
