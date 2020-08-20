@@ -59,6 +59,12 @@ impl Transform {
         self
     }
 
+    pub fn get_world_view(&self) -> Mat4 {
+        let rot: Mat4 = self.rot.into();
+        let world_view = Mat4::from_translation(-self.pos) * rot;
+        world_view
+    }
+
 }
 
 impl Component for Transform {

@@ -256,7 +256,8 @@ impl<T: TDispatchItem> DispatchGroup<T> {
 pub struct InitData {
     pub wgpu_state: Rc<RefCell<WgpuState>>,
     pub res_mgr: ResManager,
-    pub window: Rc<Window>
+    pub window: Rc<Window>,
+    pub world: World
 }
 
 /// Data when game initializes. Usually used to setup all the systems.
@@ -274,7 +275,8 @@ impl InitContext {
             init_data: InitData {
                 wgpu_state,
                 res_mgr,
-                window
+                window,
+                world: World::new()
             }
         }
     }
@@ -296,7 +298,7 @@ impl InitContext {
         self.group_thread_local.dispatch(info, func);
     }
 
-    pub fn post_dispatch(mut self, world: &mut World, builder: &mut specs::DispatcherBuilder<'static, 'static>) {
+    pub fn post_dispatch(mut self, builder: &mut specs::DispatcherBuilder<'static, 'static>) -> World {
         {
             let init_data = &mut self.init_data;
             self.group_normal.post_dispatch(|info| {
@@ -318,7 +320,8 @@ impl InitContext {
             });
         }
 
-        world.insert(self.init_data.res_mgr);
+        self.init_data.world.insert(self.init_data.res_mgr);
+        self.init_data.world
     }
 }
 
@@ -331,8 +334,8 @@ pub struct StartContext<'a> {
 /// Modules inject into the game's startup process, and are
 ///  capable of adding Systems and Entities.
 pub trait Module {
-    fn init(&self, _init_data: &mut InitContext) {}
-    fn start(&self, _start_data: &mut StartContext) {}
+    fn init(&self, _ctx: &mut InitContext) {}
+    fn start(&self, _ctx: &mut StartContext) {}
     fn get_submodules(&mut self) -> Vec<Box<dyn Module>> {
         vec![]
     }
@@ -376,19 +379,18 @@ impl RuntimeBuilder {
         // ======= INIT =======
         let mut dispatcher_builder = specs::DispatcherBuilder::new();
         let res_mgr = ResManager::new();
-        let mut init_data = crate::InitContext::new(
+        let mut init_ctx = crate::InitContext::new(
             res_mgr, client_data.wgpu_state.clone(), client_data.window.clone());
-        let mut world = World::new();
 
         // Default systems
-        dispatcher_builder.add(HierarchySystem::<HasParent>::new(&mut world), "", &[]);
+        dispatcher_builder.add(HierarchySystem::<HasParent>::new(&mut init_ctx.init_data.world), "", &[]);
 
         // Module init
         for game_module in &mut self.modules {
-            game_module.init(&mut init_data);
+            game_module.init(&mut init_ctx);
         }
 
-        init_data.post_dispatch(&mut world, &mut dispatcher_builder);
+        let mut world = init_ctx.post_dispatch(&mut dispatcher_builder);
 
         let mut dispatcher = dispatcher_builder.build();
         dispatcher.setup(&mut world);
@@ -403,12 +405,12 @@ impl RuntimeBuilder {
         world.insert(window_info);
 
         // ======= START =======
-        let mut start_data = crate::StartContext {
+        let mut start_ctx = crate::StartContext {
             world: &mut world,
             wgpu_state: client_data.wgpu_state.clone()
         };
         for game_module in &self.modules {
-            game_module.start(&mut start_data);
+            game_module.start(&mut start_ctx);
         }
 
         Runtime {
