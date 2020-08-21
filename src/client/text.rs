@@ -36,6 +36,8 @@ pub struct FontRuntimeData {
 pub struct WorldText {
     pub text: String,
     pub color: Color,
+    pub layout: Layout<BuiltInLineBreaker>,
+    pub sz: f32,
 }
 
 impl Component for WorldText {
@@ -60,18 +62,22 @@ mod internal {
             with_render_data(|rd| {
                 for cam in &mut rd.camera_infos {
                     for (text, trans) in (&world_text_read, &transform_read).join() {
+                        let size_scl = 48.; // TOOD: 估算相机中字符大小 并正确设置px
                         glyph_brush.queue(Section {
-                            screen_position: (10.0, 10.0),
-                            text: vec![Text::new(&text.text).with_scale(24.)],
+                            screen_position: (0.0, 0.0),
+                            text: vec![Text::new(&text.text)
+                                .with_scale(size_scl)
+                                .with_color(text.color)],
+                            layout: text.layout,
                             .. Section::default()
                         });
 
-                        // glyph_brush.draw_queued_with_transform(&wgpu_state.device, &mut cam.encoder,
-                        //                                        &wgpu_state.frame_texture.as_ref().unwrap().view, mat::to_array(cam.wvp_matrix));
-                        glyph_brush.draw_queued(&wgpu_state.device, &mut cam.encoder, &wgpu_state.frame_texture.as_ref().unwrap().view,
-                            wgpu_state.sc_desc.width, wgpu_state.sc_desc.height);
-                        // glyph_brush.draw_queued_with_transform(&wgpu_state.device, &mut cam.encoder,
-                        //                                        &wgpu_state.frame_texture.as_ref().unwrap().view, mat::to_array(Mat4::one()));
+                        let scl = text.sz / size_scl;
+                        let scl_mat = Mat4::from_nonuniform_scale(scl, -scl, 1.);
+                        let wvp_mat = cam.wvp_matrix * trans.get_world_view() * scl_mat;
+
+                        glyph_brush.draw_queued_with_transform(&wgpu_state.device, &mut cam.encoder,
+                                                               &wgpu_state.frame_texture.as_ref().unwrap().view, mat::to_array(wvp_mat));
                     }
                 }
             });

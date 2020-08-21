@@ -6,6 +6,8 @@ use specs::prelude::*;
 use mu::ecs::Transform;
 use mu::util::Color;
 use std::collections::HashMap;
+use mu::math::*;
+use wgpu_glyph::{Layout, HorizontalAlign, VerticalAlign};
 
 struct MyModule;
 
@@ -28,8 +30,13 @@ impl Module for MyModule {
             .build();
 
         start_data.world.create_entity()
-            .with(Transform::new())
-            .with(WorldText { text: "Now I am become death, the destroyer of worlds".to_string(), color: Color::white() })
+            .with(Transform::new().pos(vec3(0., 0., 0.)))
+            .with(WorldText {
+                text: "Now I am become death, the destroyer of worlds".to_string(),
+                sz: 0.1,
+                color: Color::white(),
+                layout: Layout::default().h_align(HorizontalAlign::Center).v_align(VerticalAlign::Center)
+            })
             .build();
     }
 }
