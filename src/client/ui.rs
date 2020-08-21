@@ -11,7 +11,6 @@ use crate::ecs::HasParent;
 use crate::math::*;
 use crate::util::Color;
 use crate::resource::ResourceRef;
-use std::collections::HashMap;
 
 // UI axis: x+ right; y+ up
 

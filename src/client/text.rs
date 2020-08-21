@@ -15,7 +15,7 @@ impl LoadableAsset for FontArc {
     fn read(path: &str) -> std::io::Result<Self> {
         let bytes: Vec<u8> = load_asset(path)?;
         FontArc::try_from_vec(bytes)
-            .map_err(|f| Error::new(ErrorKind::InvalidData, "Invalid font"))
+            .map_err(|f| Error::new(ErrorKind::InvalidData, f))
     }
 }
 
@@ -77,7 +77,8 @@ mod internal {
                         let wvp_mat = cam.wvp_matrix * trans.get_world_view() * scl_mat;
 
                         glyph_brush.draw_queued_with_transform(&wgpu_state.device, &mut cam.encoder,
-                                                               &wgpu_state.frame_texture.as_ref().unwrap().view, mat::to_array(wvp_mat));
+                           &wgpu_state.frame_texture.as_ref().unwrap().view, mat::to_array(wvp_mat))
+                            .unwrap();
                     }
                 }
             });
@@ -106,9 +107,9 @@ impl Module for TextModule {
 
         let v = init_data.fonts.iter().collect::<Vec<_>>();
 
-        let glb = GlyphBrushBuilder::using_fonts(v.iter().map(|(s, f)| (*f).clone()).collect())
+        let glb = GlyphBrushBuilder::using_fonts(v.iter().map(|(_, f)| (*f).clone()).collect())
             .build(&wgpu_state.device, wgpu_state.sc_desc.format);
-        let glb_ui = GlyphBrushBuilder::using_fonts(v.iter().map(|(s, f)| (*f).clone()).collect())
+        let glb_ui = GlyphBrushBuilder::using_fonts(v.iter().map(|(_, f)| (*f).clone()).collect())
             .build(&wgpu_state.device, wgpu_state.sc_desc.format);
 
         let rt_data = FontRuntimeData {
