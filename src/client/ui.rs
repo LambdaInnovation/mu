@@ -71,6 +71,26 @@ impl AlignType {
 
 }
 
+impl Into<wgpu_glyph::HorizontalAlign> for AlignType {
+    fn into(self) -> HorizontalAlign {
+        match self {
+            AlignType::Min => HorizontalAlign::Left,
+            AlignType::Middle => HorizontalAlign::Center,
+            AlignType::Max => HorizontalAlign::Right
+        }
+    }
+}
+
+impl Into<wgpu_glyph::VerticalAlign> for AlignType {
+    fn into(self) -> VerticalAlign {
+        match self {
+            AlignType::Min => VerticalAlign::Bottom,
+            AlignType::Middle => VerticalAlign::Center,
+            AlignType::Max => VerticalAlign::Top
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub enum LayoutType {
     Expand{ off_n: f32, off_p: f32 },
@@ -198,12 +218,32 @@ impl Component for Image {
     type Storage = VecStorage<Self>;
 }
 
-pub struct Text {
+pub struct UIText {
     pub font: FontId,
     pub text: String,
+    pub color: Color,
     pub size: f32,
     pub x_align: AlignType,
     pub y_align: AlignType
+}
+
+impl UIText {
+
+    pub fn new() -> Self {
+        Self {
+            font: FontId(0),
+            text: "".to_string(),
+            color: Color::white(),
+            size: 24.,
+            x_align: AlignType::Middle,
+            y_align: AlignType::Middle
+        }
+    }
+
+}
+
+impl Component for UIText {
+    type Storage = VecStorage<Self>;
 }
 
 pub struct UIModule;
@@ -218,8 +258,13 @@ impl Module for UIModule {
         );
 
         init_ctx.group_thread_local.dispatch(
-            InsertInfo::new("ui_images").after(&["ui_layout"]).before(&["ui_render"]),
+            InsertInfo::new("").after(&["ui_layout"]).before(&["ui_render"]),
             |_, i| i.insert_thread_local(internal::UIImageBatchSystem {})
+        );
+
+        init_ctx.group_thread_local.dispatch(
+            InsertInfo::new("").after(&["ui_layout"]).before(&["ui_render"]),
+            |_, i| i.insert_thread_local(internal::UITextBatchSystem {})
         );
 
         init_ctx.group_thread_local.dispatch(
@@ -242,6 +287,7 @@ mod internal {
     use crate::client::graphics::*;
     use crate::resource::ResManager;
     use std::collections::HashMap;
+    use crate::client::text::FontRuntimeData;
 
     // #[derive(Default)]
     pub struct WidgetRuntimeInfo {
@@ -468,7 +514,16 @@ mod internal {
             material: Option<ResourceRef<Material>>,
             color: Color
         },
-        Text {  }
+        Text {
+            wvp: Mat4,
+            rect_size: Vec2,
+            text: String,
+            font: FontId,
+            color: Color,
+            v_align: VerticalAlign,
+            h_aligh: HorizontalAlign,
+            size: f32
+        }
     }
 
     pub struct UIBatcher {
@@ -588,6 +643,64 @@ mod internal {
 
     }
 
+    struct TextBatchContext<'a, 'b> {
+        hierarchy: &'a Hierarchy<HasParent>,
+        widget_vec: &'a ReadStorage<'b, Widget>,
+        text_read: &'a ReadStorage<'b, UIText>,
+        batcher: &'a mut UIBatcher
+    }
+
+    pub struct UITextBatchSystem {}
+
+    impl UITextBatchSystem {
+
+        fn _walk<'a>(ctx: &mut TextBatchContext, entity: Entity) {
+            if let Some(text) = ctx.text_read.get(entity) {
+                let widget = ctx.widget_vec.get(entity).unwrap();
+                let wvp = widget.runtime_info.wvp;
+                let final_wvp = mat3::extend_to_mat4(&wvp) * Mat4::from_nonuniform_scale(1.0, -1.0, 1.0);
+
+                ctx.batcher.batch(widget.runtime_info.draw_idx, DrawInstance::Text {
+                    wvp: final_wvp,
+                    text: text.text.clone(), // TODO: text clone is expensive operation, avoid it
+                    color: text.color,
+                    h_aligh: text.x_align.into(),
+                    v_align: text.y_align.into(),
+                    size: text.size,
+                    font: text.font,
+                    rect_size: widget.runtime_info.size
+                });
+            }
+
+            for child in ctx.hierarchy.children(entity) {
+                Self::_walk(ctx, child.clone());
+            }
+        }
+    }
+
+    impl<'a> System<'a> for UITextBatchSystem {
+        type SystemData = (
+            WriteStorage<'a, Canvas>,
+            Entities<'a>, ReadExpect<'a, Hierarchy<HasParent>>,
+            ReadStorage<'a, Widget>,
+            ReadStorage<'a, UIText>);
+
+        fn run(&mut self, (mut canvas, entities, hierarchy, widget_storage, text_storage): Self::SystemData) {
+            for (ent, canvas) in (&entities, &mut canvas).join() {
+                let mut ctx = TextBatchContext {
+                    hierarchy: &hierarchy,
+                    widget_vec: &widget_storage,
+                    text_read: &text_storage,
+                    batcher: &mut canvas.batcher
+                };
+
+                for child in ctx.hierarchy.children(ent) {
+                    Self::_walk(&mut ctx, child.clone());
+                }
+            }
+        }
+    }
+
     struct UIImageRenderData {
         default_material: Material,
         default_pipeline: wgpu::RenderPipeline,
@@ -702,15 +815,17 @@ mod internal {
     }
 
     impl<'a> System<'a> for UIRenderSystem {
-        type SystemData = (ReadExpect<'a, ResManager>, WriteStorage<'a, Canvas>);
+        type SystemData = (WriteExpect<'a, FontRuntimeData>, ReadExpect<'a, ResManager>, WriteStorage<'a, Canvas>);
 
-        fn run(&mut self, (res_mgr, mut canvas_write): Self::SystemData) {
+        fn run(&mut self, (mut font_data, res_mgr, mut canvas_write): Self::SystemData) {
             let wgpu_state = self.wgpu_state.borrow();
             let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: None
             });
+
             for canvas in (&mut canvas_write).join() {
                 let draw_calls = canvas.batcher.finish();
+
                 for draw in draw_calls {
                     match draw {
                         DrawInstance::Image {
@@ -745,7 +860,8 @@ mod internal {
                                 bytemuck::cast_slice(&instances),
                                 wgpu::BufferUsage::VERTEX
                             );
-                            
+
+                            let bind_group = image_data.default_material.get_bind_group(&*res_mgr, &wgpu_state.device);
                             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                                 color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
                                     attachment: &wgpu_state.frame_texture.as_ref().unwrap().view,
@@ -756,8 +872,6 @@ mod internal {
                                 }],
                                 depth_stencil_attachment: None
                             });
-
-                            let bind_group = image_data.default_material.get_bind_group(&*res_mgr, &wgpu_state.device);
                             render_pass.set_pipeline(&image_data.default_pipeline);
                             render_pass.set_bind_group(0, &bind_group, &[]);
                             render_pass.set_vertex_buffer(0, &image_data.vbo, 0, 0);
@@ -765,7 +879,21 @@ mod internal {
                             render_pass.set_index_buffer(&image_data.ibo, 0, 0);
                             render_pass.draw_indexed(0..6, 0, 0..1);
                         },
-                        _ => unimplemented!()
+                        DrawInstance::Text { wvp, rect_size, text, font, color, v_align, h_aligh, size } => {
+                            // info!("{:?}/{:?}", h_aligh, v_align);
+                            font_data.glyph_brush_ui.queue(Section {
+                                text: vec![Text::new(&text).with_color(color).with_scale(size).with_font_id(font)],
+                                layout: Layout::default().h_align(h_aligh).v_align(v_align),
+                                bounds: (rect_size.x, rect_size.y),
+                                screen_position: (rect_size.x / 2., -rect_size.y / 2.),
+                                ..Default::default()
+                            });
+
+                            font_data.glyph_brush_ui.draw_queued_with_transform(
+                                &wgpu_state.device, &mut encoder,
+                                &wgpu_state.frame_texture.as_ref().unwrap().view,
+                                mat::to_array(wvp)).expect("Render text failed");
+                        }
                     }
                 }
             }

@@ -1,6 +1,7 @@
 use specs::prelude::*;
 
 use mu::*;
+use mu::asset::*;
 use mu::log::*;
 use mu::client::graphics::GraphicsModule;
 use mu::client::ui::*;
@@ -9,6 +10,9 @@ use mu::math::{vec2};
 use mu::util::Color;
 use mu::client::sprite::*;
 use mu::resource::*;
+use wgpu_glyph::Text;
+use mu::client::text::*;
+use std::collections::HashMap;
 
 struct TestDialogComponent {
     btn_ok: Entity
@@ -50,6 +54,17 @@ impl TestDialogComponent {
                 .with_raycast()
             )
             .with(image1)
+            .build();
+
+        let mut text1 = UIText::new();
+        text1.text = "Hello World".to_string();
+        let _ent_button_text = world.create_entity()
+            .with(HasParent::new(ent_button))
+            .with(Widget::new()
+                .with_layout_x(LayoutType::expand(0., 0.))
+                .with_layout_y(LayoutType::expand(0., 0.))
+            )
+            .with(text1)
             .build();
 
         let mut image2 = Image::new();
@@ -101,8 +116,13 @@ struct DialogResources {
 }
 
 impl Module for MyModule {
-    fn init(&self, init_ctx: &mut InitContext) {
-        init_ctx.dispatch(InsertInfo::new(""),
+    fn init(&self, ctx: &mut InitContext) {
+        let mut fonts = HashMap::new();
+        fonts.insert("Default".to_string(), load_asset::<FontArc>("Inconsolata-Regular.ttf").unwrap());
+        ctx.init_data.world.insert(FontInitData {
+            fonts
+        });
+        ctx.dispatch(InsertInfo::new(""),
             |_, i| {
                 i.insert(TestDialogSystem);
             });
@@ -132,6 +152,7 @@ fn main() {
     mu::asset::set_base_asset_path("./examples/asset");
     let runtime = RuntimeBuilder::new("UI Test")
         .add_game_module(GraphicsModule)
+        .add_game_module(TextModule)
         .add_game_module(UIModule)
         .add_game_module(MyModule)
         .build();
