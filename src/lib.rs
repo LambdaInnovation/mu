@@ -540,9 +540,13 @@ impl Runtime {
                         raw_input.on_window_event(&event);
                         match event {
                             WindowEvent::Resized(physical_size) => {
-                                window.set_inner_size(physical_size);
                                 let mut window_info = world.write_resource::<WindowInfo>();
-                                window_info.pixel_size = (physical_size.width, physical_size.height)
+                                window_info.pixel_size = (physical_size.width, physical_size.height);
+
+                                let mut ws = wgpu_state.borrow_mut();
+                                ws.sc_desc.width = physical_size.width;
+                                ws.sc_desc.height = physical_size.height;
+                                ws.swap_chain = ws.device.create_swap_chain(&ws.surface, &ws.sc_desc);
                             }
                             WindowEvent::CloseRequested => {
                                 *control_flow = winit::event_loop::ControlFlow::Exit;

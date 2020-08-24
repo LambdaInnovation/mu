@@ -10,7 +10,6 @@ use mu::math::{vec2};
 use mu::util::Color;
 use mu::client::sprite::*;
 use mu::resource::*;
-use wgpu_glyph::Text;
 use mu::client::text::*;
 use std::collections::HashMap;
 
@@ -58,6 +57,11 @@ impl TestDialogComponent {
 
         let mut image1 = Image::new();
         image1.color = Color::rgb(0.8, 0.2, 0.2);
+
+        let mut tint = UIClickTint::new();
+        tint.normal_color = Color::rgb(0.8, 0.2, 0.2);
+        tint.click_color = Color::rgb(1.0, 0.4, 0.4);
+
         let ent_button = world.create_entity()
             .with(HasParent::new(ent_window))
             .with(Widget::new()
@@ -65,6 +69,7 @@ impl TestDialogComponent {
                 .with_layout_y(LayoutType::normal(AlignType::Min, 60., 60.))
                 .with_raycast()
             )
+            .with(tint)
             .with(image1)
             .build();
 

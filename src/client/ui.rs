@@ -109,8 +109,8 @@ impl LayoutType {
 
 }
 
-#[derive(Copy, Clone, Debug)]
-enum WidgetCursorState {
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum WidgetCursorState {
     Idle,
     /// 鼠标在widget上按下 未松开 可能拖动到任意位置
     Dragging
@@ -169,6 +169,10 @@ impl Widget {
     pub fn with_raycast(mut self) -> Self {
         self.raycast = true;
         self
+    }
+
+    pub fn get_button_state(&self, btn_id: u8) -> WidgetCursorState {
+        self.runtime_info.cursor_states[btn_id as usize]
     }
 
     // pub fn runtime_info(&self) -> &WidgetRuntimeInfo {
@@ -246,11 +250,47 @@ impl Component for UIText {
     type Storage = VecStorage<Self>;
 }
 
+#[derive(Copy, Clone, Debug)]
+enum UIClickTintState {
+    Idle,
+    Click(f32),
+    Hold,
+    Release(f32)
+}
+
+pub struct UIClickTint {
+    pub normal_color: Color,
+    pub click_color: Color,
+    pub blend_time: f32,
+    state: UIClickTintState
+}
+
+impl Component for UIClickTint {
+    type Storage = VecStorage<Self>;
+}
+
+impl UIClickTint {
+
+    pub fn new() -> Self {
+        Self {
+            normal_color: Color::white(),
+            click_color: Color::mono(0.8),
+            blend_time: 0.1,
+            state: UIClickTintState::Idle
+        }
+    }
+
+}
+
 pub struct UIModule;
 
 impl Module for UIModule {
     fn init(&self, init_ctx: &mut InitContext) {
         use super::graphics;
+        init_ctx.group_normal.dispatch(
+            InsertInfo::new(""),
+            |_, i| i.insert(internal::TintUpdateSystem {})
+        );
         // 这个其实不用insert到thread local，但是执行依赖关系不好处理
         init_ctx.group_thread_local.dispatch(
             InsertInfo::new("ui_layout").before(&[graphics::DEP_CAM_DRAW_SETUP]),
@@ -301,7 +341,7 @@ mod internal {
         pub wvp_inverse: Mat3,
         /// widget在canvas里的绘制顺序
         pub draw_idx: u32,
-        cursor_states: [WidgetCursorState; 8]
+        pub cursor_states: [WidgetCursorState; 8]
     }
 
     impl WidgetRuntimeInfo {
@@ -444,6 +484,48 @@ mod internal {
         }
 
         button_flags
+    }
+
+    pub struct TintUpdateSystem;
+
+    impl<'a> System<'a> for TintUpdateSystem {
+        type SystemData = ( ReadExpect<'a, Time>,
+                            ReadStorage<'a, Widget>,
+                            WriteStorage<'a, UIClickTint>, WriteStorage<'a, Image> );
+
+        fn run(&mut self, (time, widget_read, mut tint_write, mut image_write): Self::SystemData) {
+            let dt = time.get_delta_time();
+            for (widget, tint, image) in (&widget_read, &mut tint_write, &mut image_write).join() {
+                let btn_state = widget.get_button_state(0);
+                match tint.state {
+                    UIClickTintState::Idle => if btn_state == WidgetCursorState::Dragging {
+                        tint.state = UIClickTintState::Click(0.);
+                    }
+                    UIClickTintState::Click(t0) => if t0 < tint.blend_time {
+                        tint.state = UIClickTintState::Click(t0 + dt)
+                    } else {
+                        tint.state = UIClickTintState::Hold
+                    },
+                    UIClickTintState::Hold => if btn_state == WidgetCursorState::Idle {
+                        tint.state = UIClickTintState::Release(0.)
+                    },
+                    UIClickTintState::Release(t0) => if t0 < tint.blend_time {
+                        tint.state = UIClickTintState::Release(t0 + dt)
+                    } else {
+                        tint.state = UIClickTintState::Idle
+                    },
+                }
+
+                let color = match tint.state {
+                    UIClickTintState::Idle => tint.normal_color,
+                    UIClickTintState::Click(t) => Color::lerp(&tint.normal_color, &tint.click_color, t / tint.blend_time),
+                    UIClickTintState::Hold => tint.click_color,
+                    UIClickTintState::Release(t) => Color::lerp(&tint.click_color, &tint.normal_color, t / tint.blend_time),
+                };
+
+                image.color = color;
+            }
+        }
     }
 
     /// UI layout update -> UI control update
