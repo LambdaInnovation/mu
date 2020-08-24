@@ -35,7 +35,7 @@ impl Module for MyModule {
                 text: "Now I am become death, the destroyer of worlds".to_string(),
                 sz: 0.1,
                 color: Color::white(),
-                layout: Layout::default().h_align(HorizontalAlign::Center).v_align(VerticalAlign::Center)
+                layout: Layout::default().h_align(HorizontalAlign::Left).v_align(VerticalAlign::Center)
             })
             .build();
     }

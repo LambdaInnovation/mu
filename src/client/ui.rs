@@ -520,8 +520,8 @@ mod internal {
             text: String,
             font: FontId,
             color: Color,
-            v_align: VerticalAlign,
-            h_aligh: HorizontalAlign,
+            v_align: AlignType,
+            h_aligh: AlignType,
             size: f32
         }
     }
@@ -664,8 +664,8 @@ mod internal {
                     wvp: final_wvp,
                     text: text.text.clone(), // TODO: text clone is expensive operation, avoid it
                     color: text.color,
-                    h_aligh: text.x_align.into(),
-                    v_align: text.y_align.into(),
+                    h_aligh: text.x_align,
+                    v_align: text.y_align,
                     size: text.size,
                     font: text.font,
                     rect_size: widget.runtime_info.size
@@ -880,13 +880,12 @@ mod internal {
                             render_pass.draw_indexed(0..6, 0, 0..1);
                         },
                         DrawInstance::Text { wvp, rect_size, text, font, color, v_align, h_aligh, size } => {
-                            // info!("{:?}/{:?}", h_aligh, v_align);
                             font_data.glyph_brush_ui.queue(Section {
-                                text: vec![Text::new(&text).with_color(color).with_scale(size).with_font_id(font)],
-                                layout: Layout::default().h_align(h_aligh).v_align(v_align),
+                                text:   vec![Text::new(&text).with_color(color).with_scale(size).with_font_id(font)],
+                                layout: Layout::default().h_align(h_aligh.into()).v_align(v_align.into()),
                                 bounds: (rect_size.x, rect_size.y),
-                                screen_position: (rect_size.x / 2., -rect_size.y / 2.),
-                                ..Default::default()
+                                screen_position: (rect_size.x * h_aligh.ratio(), -rect_size.y * v_align.ratio()),
+                                .. Default::default()
                             });
 
                             font_data.glyph_brush_ui.draw_queued_with_transform(

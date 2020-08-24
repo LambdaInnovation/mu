@@ -34,7 +34,7 @@ impl TestDialogComponent {
 
         let mut image1 = Image::new();
         image1.color = Color::rgb(0.6, 0.6, 0.4);
-        let _ent_header = world.create_entity()
+        let ent_header = world.create_entity()
             .with(HasParent::new(ent_window))
             .with(Widget::new()
                 .with_pivot(vec2(0.5, 1.))
@@ -42,6 +42,18 @@ impl TestDialogComponent {
                 .with_layout_y(LayoutType::normal(AlignType::Max, 0., 80.))
             )
             .with(image1)
+            .build();
+
+        let mut text0 = UIText::new();
+        text0.text = "Hello world!!!".to_string();
+        text0.x_align = AlignType::Min;
+        world.create_entity()
+            .with(HasParent::new(ent_header))
+            .with(Widget::new()
+                .with_layout_x(LayoutType::expand(20., 0.))
+                .with_layout_y(LayoutType::expand(0., 0.))
+            )
+            .with(text0)
             .build();
 
         let mut image1 = Image::new();
@@ -57,7 +69,8 @@ impl TestDialogComponent {
             .build();
 
         let mut text1 = UIText::new();
-        text1.text = "Hello World".to_string();
+        text1.text = "Go".to_string();
+        text1.x_align = AlignType::Middle;
         let _ent_button_text = world.create_entity()
             .with(HasParent::new(ent_button))
             .with(Widget::new()
