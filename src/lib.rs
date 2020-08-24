@@ -46,7 +46,7 @@ impl<'a> Insert<'a> {
         where
             T: for<'x> specs::System<'x> + Send + 'static,
     {
-        info!("insert {}", self.name);
+        info!("insert {}({})", self.name, std::any::type_name::<T>());
         self.builder.add(system, self.name, self.deps);
     }
 }
@@ -64,7 +64,7 @@ impl<'a> InsertThreadLocal<'a> {
         where
             T: for<'x> specs::RunNow<'x> + 'static,
     {
-        info!("insert_thread_local {}", self.name);
+        info!("insert_thread_local {}({})", self.name, std::any::type_name::<T>());
         self.builder.add_thread_local(system);
     }
 
