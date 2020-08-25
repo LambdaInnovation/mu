@@ -12,14 +12,22 @@ use mu::client::sprite::*;
 use mu::resource::*;
 use mu::client::text::*;
 use std::collections::HashMap;
+use winit::window::CursorIcon::Alias;
 
 struct TestDialogComponent {
-    btn_ok: Entity
+    dialog_root: Entity,
+    btn_ok: Entity,
+    btn_close: Entity
 }
 
 impl TestDialogComponent {
 
     pub fn create_dialog(world: &mut World, canvas: Entity) {
+        let resources = world.read_resource::<DialogResources>();
+        let close_sprite = resources.close_sprite.clone();
+        let kasumi_sprite = resources.default_sprite.clone();
+        drop(resources);
+
         let mut image0 = Image::new();
         image0.color = Color::rgb(0.8, 0.8, 0.6);
         let ent_window = world.create_entity()
@@ -56,11 +64,23 @@ impl TestDialogComponent {
             .build();
 
         let mut image1 = Image::new();
+        image1.sprite = Some(close_sprite);
+        let ent_button_close = world.create_entity()
+            .with(HasParent::new(ent_header))
+            .with(Widget::new()
+                .with_layout_x(LayoutType::normal(AlignType::Max, -40., 60.))
+                .with_layout_y(LayoutType::normal(AlignType::Middle, 0., 60.))
+                .with_raycast())
+            .with(image1)
+            .with(UIClickTint::new())
+            .build();
+
+        let mut image1 = Image::new();
         image1.color = Color::rgb(0.8, 0.2, 0.2);
 
         let mut tint = UIClickTint::new();
-        tint.normal_color = Color::rgb(0.8, 0.2, 0.2);
-        tint.click_color = Color::rgb(1.0, 0.4, 0.4);
+        tint.click_color = Color::rgb(0.8, 0.2, 0.2);
+        tint.normal_color = Color::rgb(1.0, 0.4, 0.4);
 
         let ent_button = world.create_entity()
             .with(HasParent::new(ent_window))
@@ -74,7 +94,7 @@ impl TestDialogComponent {
             .build();
 
         let mut text1 = UIText::new();
-        text1.text = "Go".to_string();
+        text1.text = "Duplicate".to_string();
         text1.x_align = AlignType::Middle;
         let _ent_button_text = world.create_entity()
             .with(HasParent::new(ent_button))
@@ -86,8 +106,7 @@ impl TestDialogComponent {
             .build();
 
         let mut image2 = Image::new();
-        let sprite_ref = world.read_resource::<DialogResources>().default_sprite.clone();
-        image2.sprite = Some(sprite_ref);
+        image2.sprite = Some(kasumi_sprite);
         world.create_entity()
             .with(HasParent::new(ent_window))
             .with(Widget::new()
@@ -98,7 +117,9 @@ impl TestDialogComponent {
             .build();
 
         world.write_component::<TestDialogComponent>().insert(ent_window, TestDialogComponent {
-            btn_ok: ent_button
+            dialog_root: ent_window,
+            btn_ok: ent_button,
+            btn_close: ent_button_close
         }).unwrap();
     }
 
@@ -111,14 +132,17 @@ impl Component for TestDialogComponent {
 struct TestDialogSystem;
 
 impl<'a> System<'a> for TestDialogSystem {
-    type SystemData = (ReadStorage<'a, TestDialogComponent>, ReadExpect<'a, WidgetEvents>);
+    type SystemData = (Entities<'a>, ReadStorage<'a, TestDialogComponent>, ReadExpect<'a, WidgetEvents>);
 
-    fn run(&mut self, (dialogs, events): Self::SystemData) {
+    fn run(&mut self, (entities, dialogs, events): Self::SystemData) {
         for dlg in (&dialogs).join() {
             for ev in &events.events {
                 match ev {
                     WidgetEvent::Clicked { entity, .. } if *entity == dlg.btn_ok => {
                         info!("OK btn clicked!");
+                    }
+                    WidgetEvent::Clicked { entity, .. } if *entity == dlg.btn_close => {
+                        entities.delete(dlg.dialog_root).unwrap();
                     }
                     _ => ()
                 }
@@ -130,7 +154,8 @@ impl<'a> System<'a> for TestDialogSystem {
 struct MyModule;
 
 struct DialogResources {
-    default_sprite: SpriteRef
+    default_sprite: SpriteRef,
+    close_sprite: SpriteRef
 }
 
 impl Module for MyModule {
@@ -154,8 +179,15 @@ impl Module for MyModule {
         };
         let sprite_ref = SpriteRef::new(&sprite_sheet_ref, 0);
 
+        let close_sheet_ref = {
+            let mut res_mgr = ctx.world.write_resource::<ResManager>();
+            load_sprite_sheet(&mut *res_mgr, &wgpu_state, "texture/close.sheet.json").unwrap()
+        };
+        let close_sprite_ref = SpriteRef::new(&close_sheet_ref, 0);
+
         ctx.world.insert(DialogResources {
-            default_sprite: sprite_ref
+            default_sprite: sprite_ref,
+            close_sprite: close_sprite_ref
         });
 
         let ent_canvas = ctx.world.create_entity()

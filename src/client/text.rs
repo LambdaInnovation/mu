@@ -1,9 +1,9 @@
 use wgpu_glyph::*;
 use std::collections::HashMap;
 use specs::prelude::*;
-use crate::client::graphics::*;
+use crate::*;
 use crate::math::*;
-use crate::{Module, WgpuStateCell, StartContext, InitContext, InsertInfo};
+use crate::client::graphics::*;
 use crate::util::Color;
 use crate::ecs::Transform;
 use crate::asset::*;
@@ -19,7 +19,7 @@ impl LoadableAsset for FontArc {
     }
 }
 
-/// A `Resource` describing all fonts that will be used by
+/// A `Resource` describing all fonts that will be used after.
 pub struct FontInitData {
     pub fonts: HashMap<String, ab_glyph::FontArc>
 }

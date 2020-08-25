@@ -1,0 +1,6 @@
+{
+  "image": "close.png",
+  "sampler": {
+    "filter": "Nearest"
+  }
+}
