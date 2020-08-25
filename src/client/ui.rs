@@ -109,11 +109,11 @@ impl LayoutType {
 
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug)]
 pub enum WidgetCursorState {
     Idle,
     /// 鼠标在widget上按下 未松开 可能拖动到任意位置
-    Dragging
+    Dragging(Vec2) // parameter: last parent pos
 }
 
 pub struct Widget {
@@ -144,7 +144,7 @@ impl Widget {
         }
     }
 
-    fn _mark_dirty(&mut self) {
+    pub fn _mark_dirty(&mut self) {
         self.runtime_info.dirty = true;
     }
 
@@ -194,7 +194,7 @@ pub enum WidgetEvent {
     Clicked { entity: Entity, btn: u8 },
 
     // Fired every frame widget is being dragged. delta: cursor position change in PARENT space.
-    // Drag { entity: Entity, btn: u8, delta: Vec2 },
+    Drag { entity: Entity, btn: u8, delta: Vec2 },
 
     /// Fired in the frame when widget's dragging is released.
     Release { entity: Entity, btn: u8 },
@@ -394,6 +394,7 @@ mod internal {
         widget_events: &'a mut WriteExpect<'b, WidgetEvents>,
         hierarchy: &'a Hierarchy<HasParent>,
         widget_vec: &'a mut WriteStorage<'b, Widget>,
+        canvas_size: Vec2,
         cur_widget_draw_idx: u32
     }
 
@@ -439,18 +440,32 @@ mod internal {
     }
 
     pub fn _update_widget_input(ctx: &mut WidgetRecurseContextMut, entity: Entity, input: &UICursorData)
-                                -> u8 { // 返回值是子节点或自己是否已经处理hover/click
+                                -> u8 { // 返回值是子节点或自己是否已经处理hover/click/drag
         let mut button_flags: u8 = 0;
         for child in ctx.hierarchy.children(entity) {
             button_flags |= _update_widget_input(ctx, *child, &input);
         }
 
+        let wvp_parent_inv = {
+            let parent_entity = ctx.hierarchy.parent(entity).unwrap();
+            let parent_widget = ctx.widget_vec.get(parent_entity);
+            match parent_widget {
+                Some(parent_actual) => {
+                    let mut m = parent_actual.runtime_info.wvp_inverse;
+                    m.z[0] = 0.;
+                    m.z[1] = 0.;
+                    m
+                },
+                None => {
+                    mat3::scale(vec2(ctx.canvas_size.x / 2.0, ctx.canvas_size.y / 2.0))
+                }
+            }
+        };
+
         let widget = ctx.widget_vec.get_mut(entity).unwrap();
+
         let pos_local: Vec3 = widget.runtime_info.wvp_inverse * vec3(input.cursor_ndc.x, input.cursor_ndc.y, 1.);
         let pos_local = vec2(pos_local.x, pos_local.y);
-        if widget.raycast {
-            // info!("update_widget_layout {:?} {:?} {:?}", entity, pos_local, widget.runtime_info.size);
-        }
         let rect = Rect::new(0., 0., widget.runtime_info.size.x, widget.runtime_info.size.y);
         if widget.raycast {
             for btn_id in 0u8..8 {
@@ -462,20 +477,29 @@ mod internal {
 
                 let cursor_state = &mut widget.runtime_info.cursor_states[btn_id as usize];
                 match cursor_state {
-                    WidgetCursorState::Dragging => {
+                    WidgetCursorState::Dragging(last_pos) => {
                         if btn_state.is_up() {
                             // info!("Widget up! {:?}", entity.id());
                             ctx.widget_events.events.push(WidgetEvent::Release { entity, btn: btn_id });
                             *cursor_state = WidgetCursorState::Idle;
                         } else {
                             button_flags |= 1 << btn_id;
+                            let delta_ndc = input.cursor_ndc - *last_pos;
+                            let delta_parent = wvp_parent_inv * vec3(delta_ndc.x, delta_ndc.y, 1.);
+
+                            ctx.widget_events.events.push(WidgetEvent::Drag {
+                                entity,
+                                btn: btn_id,
+                                delta: vec2(delta_parent.x, delta_parent.y)
+                            });
+                            *last_pos = input.cursor_ndc;
                         }
                     },
                     _ => {
                         if rect.contains(&pos_local) && btn_state == ButtonState::Down {
                             // info!("Widget down! {:?}", entity.id());
                             ctx.widget_events.events.push(WidgetEvent::Clicked { entity, btn: btn_id });
-                            *cursor_state = WidgetCursorState::Dragging;
+                            *cursor_state = WidgetCursorState::Dragging(input.cursor_ndc);
                             button_flags |= 1 << btn_id;
                         }
                     }
@@ -485,49 +509,6 @@ mod internal {
 
         button_flags
     }
-
-    pub struct TintUpdateSystem;
-
-    impl<'a> System<'a> for TintUpdateSystem {
-        type SystemData = ( ReadExpect<'a, Time>,
-                            ReadStorage<'a, Widget>,
-                            WriteStorage<'a, UIClickTint>, WriteStorage<'a, Image> );
-
-        fn run(&mut self, (time, widget_read, mut tint_write, mut image_write): Self::SystemData) {
-            let dt = time.get_delta_time();
-            for (widget, tint, image) in (&widget_read, &mut tint_write, &mut image_write).join() {
-                let btn_state = widget.get_button_state(0);
-                match tint.state {
-                    UIClickTintState::Idle => if btn_state == WidgetCursorState::Dragging {
-                        tint.state = UIClickTintState::Click(0.);
-                    }
-                    UIClickTintState::Click(t0) => if t0 < tint.blend_time {
-                        tint.state = UIClickTintState::Click(t0 + dt)
-                    } else {
-                        tint.state = UIClickTintState::Hold
-                    },
-                    UIClickTintState::Hold => if btn_state == WidgetCursorState::Idle {
-                        tint.state = UIClickTintState::Release(0.)
-                    },
-                    UIClickTintState::Release(t0) => if t0 < tint.blend_time {
-                        tint.state = UIClickTintState::Release(t0 + dt)
-                    } else {
-                        tint.state = UIClickTintState::Idle
-                    },
-                }
-
-                let color = match tint.state {
-                    UIClickTintState::Idle => tint.normal_color,
-                    UIClickTintState::Click(t) => Color::lerp(&tint.normal_color, &tint.click_color, t / tint.blend_time),
-                    UIClickTintState::Hold => tint.click_color,
-                    UIClickTintState::Release(t) => Color::lerp(&tint.click_color, &tint.normal_color, t / tint.blend_time),
-                };
-
-                image.color = color;
-            }
-        }
-    }
-
     /// UI layout update -> UI control update
     pub struct UIUpdateSystem {
 
@@ -562,7 +543,8 @@ mod internal {
                     widget_events: &mut widget_events,
                     hierarchy: &*hierarchy,
                     widget_vec: &mut widget_vec,
-                    cur_widget_draw_idx: 0
+                    cur_widget_draw_idx: 0,
+                    canvas_size: vec2(width, height)
                 };
 
                 let cursor_pos = input.cursor_position;
@@ -588,6 +570,55 @@ mod internal {
             // info!("cursor pos: {:?}", input.cursor_position);
         }
     }
+
+    pub struct TintUpdateSystem;
+
+    impl<'a> System<'a> for TintUpdateSystem {
+        type SystemData = ( ReadExpect<'a, Time>,
+                            ReadStorage<'a, Widget>,
+                            WriteStorage<'a, UIClickTint>, WriteStorage<'a, Image> );
+
+        fn run(&mut self, (time, widget_read, mut tint_write, mut image_write): Self::SystemData) {
+            let dt = time.get_delta_time();
+            for (widget, tint, image) in (&widget_read, &mut tint_write, &mut image_write).join() {
+                let btn_state = widget.get_button_state(0);
+                match tint.state {
+                    UIClickTintState::Idle => match btn_state {
+                        WidgetCursorState::Dragging(..) => {
+                            tint.state = UIClickTintState::Click(0.);
+                        }
+                        _ => ()
+                    }
+                    UIClickTintState::Click(t0) => if t0 < tint.blend_time {
+                        tint.state = UIClickTintState::Click(t0 + dt)
+                    } else {
+                        tint.state = UIClickTintState::Hold
+                    },
+                    UIClickTintState::Hold => match btn_state {
+                        WidgetCursorState::Idle => {
+                            tint.state = UIClickTintState::Release(0.)
+                        },
+                        _ => ()
+                    },
+                    UIClickTintState::Release(t0) => if t0 < tint.blend_time {
+                        tint.state = UIClickTintState::Release(t0 + dt)
+                    } else {
+                        tint.state = UIClickTintState::Idle
+                    },
+                }
+
+                let color = match tint.state {
+                    UIClickTintState::Idle => tint.normal_color,
+                    UIClickTintState::Click(t) => Color::lerp(&tint.normal_color, &tint.click_color, t / tint.blend_time),
+                    UIClickTintState::Hold => tint.click_color,
+                    UIClickTintState::Release(t) => Color::lerp(&tint.click_color, &tint.normal_color, t / tint.blend_time),
+                };
+
+                image.color = color;
+            }
+        }
+    }
+
 
     enum DrawInstance {
         Image {

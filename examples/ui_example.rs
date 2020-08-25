@@ -12,12 +12,12 @@ use mu::client::sprite::*;
 use mu::resource::*;
 use mu::client::text::*;
 use std::collections::HashMap;
-use winit::window::CursorIcon::Alias;
 
 struct TestDialogComponent {
     dialog_root: Entity,
     btn_ok: Entity,
-    btn_close: Entity
+    btn_close: Entity,
+    header: Entity
 }
 
 impl TestDialogComponent {
@@ -47,6 +47,7 @@ impl TestDialogComponent {
                 .with_pivot(vec2(0.5, 1.))
                 .with_layout_x(LayoutType::expand(0., 0.))
                 .with_layout_y(LayoutType::normal(AlignType::Max, 0., 80.))
+                .with_raycast()
             )
             .with(image1)
             .build();
@@ -119,7 +120,8 @@ impl TestDialogComponent {
         world.write_component::<TestDialogComponent>().insert(ent_window, TestDialogComponent {
             dialog_root: ent_window,
             btn_ok: ent_button,
-            btn_close: ent_button_close
+            btn_close: ent_button_close,
+            header: ent_header
         }).unwrap();
     }
 
@@ -132,18 +134,34 @@ impl Component for TestDialogComponent {
 struct TestDialogSystem;
 
 impl<'a> System<'a> for TestDialogSystem {
-    type SystemData = (Entities<'a>, ReadStorage<'a, TestDialogComponent>, ReadExpect<'a, WidgetEvents>);
+    type SystemData = (Entities<'a>, ReadStorage<'a, TestDialogComponent>, WriteStorage<'a, Widget>, ReadExpect<'a, WidgetEvents>);
 
-    fn run(&mut self, (entities, dialogs, events): Self::SystemData) {
+    fn run(&mut self, (entities, dialogs, mut widgets, events): Self::SystemData) {
         for dlg in (&dialogs).join() {
             for ev in &events.events {
                 match ev {
-                    WidgetEvent::Clicked { entity, .. } if *entity == dlg.btn_ok => {
+                    WidgetEvent::Clicked { entity, btn: 0 } if *entity == dlg.btn_ok => {
                         info!("OK btn clicked!");
                     }
-                    WidgetEvent::Clicked { entity, .. } if *entity == dlg.btn_close => {
+                    WidgetEvent::Clicked { entity, btn: 0 } if *entity == dlg.btn_close => {
                         entities.delete(dlg.dialog_root).unwrap();
-                    }
+                    },
+                    WidgetEvent::Drag { entity, delta, btn: 0 } if *entity == dlg.header => {
+                        let widget = widgets.get_mut(dlg.dialog_root).unwrap();
+                        match widget.layout_x {
+                            LayoutType::Normal { align, pos, len } => {
+                                widget.layout_x = LayoutType::Normal { align, pos: pos + delta.x, len }
+                            }
+                            _ => panic!()
+                        }
+                        match widget.layout_y {
+                            LayoutType::Normal { align, pos, len } => {
+                                widget.layout_y = LayoutType::Normal { align, pos: pos + delta.y, len }
+                            }
+                            _ => panic!()
+                        }
+                        widget._mark_dirty();
+                    },
                     _ => ()
                 }
             }
