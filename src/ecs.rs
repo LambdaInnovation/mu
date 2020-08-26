@@ -3,6 +3,9 @@ use specs::prelude::*;
 use crate::math::*;
 use std::time::Instant;
 use specs_hierarchy::Parent;
+use crate::proto::{ComponentS11n, EntityLoadContext};
+use serde_json::Value;
+use serde::{Serialize, Deserialize};
 
 const MAX_DELTA_TIME: f32 = 0.1;
 
@@ -35,6 +38,7 @@ impl Time {
 }
 
 /// A generic 3d transform.
+#[derive(Serialize, Deserialize)]
 pub struct Transform {
     pub pos: Vec3,
     pub rot: Quaternion,
@@ -71,6 +75,15 @@ impl Component for Transform {
     type Storage = specs::VecStorage<Self>;
 }
 
+// TODO: Can be auto-derived
+impl ComponentS11n for Transform {
+
+    fn load(data: Value, _ctx: &EntityLoadContext) -> Self {
+        serde_json::from_value(data).unwrap()
+    }
+
+}
+
 /// Generic parent component used for `specs-hierarchy`.
 /// for detailed usage see [specs-hierarchy site](https://github.com/rustgd/specs-hierarchy)
 #[derive(Debug, Copy, Clone, Eq, Ord, PartialOrd, PartialEq)]
@@ -93,5 +106,20 @@ impl Component for HasParent {
 impl Parent for HasParent {
     fn parent_entity(&self) -> Entity {
         self.parent
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct HasParentS11n {
+    entity_id: u32
+}
+
+impl ComponentS11n for HasParent {
+    fn load(data: Value, ctx: &EntityLoadContext) -> Self {
+        let tmp: HasParentS11n = serde_json::from_value(data).unwrap();
+        let entity = ctx.entity_mapping.get(&tmp.entity_id).unwrap().clone();
+        HasParent {
+            parent: entity
+        }
     }
 }

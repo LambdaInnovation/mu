@@ -30,6 +30,7 @@ pub mod resource;
 pub mod ecs;
 pub mod math;
 pub mod util;
+pub mod proto;
 pub mod client;
 
 /// Helper struct for adding a sorted system.
