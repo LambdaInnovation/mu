@@ -323,7 +323,7 @@ impl Module for UIModule {
 mod internal {
     use crate::client::input::ButtonState;
     use super::*;
-    use crate::{WgpuState, WgpuStateCell};
+    use crate::{WgpuState};
     use crate::client::graphics::*;
     use crate::resource::ResManager;
     use std::collections::HashMap;
@@ -915,27 +915,24 @@ mod internal {
 
     pub struct UIRenderSystem {
         image_data: UIImageRenderData,
-        wgpu_state: WgpuStateCell
     }
 
     impl UIRenderSystem {
 
         pub fn new(init_data: &mut InitData) -> Self {
-            let wgpu_state = init_data.wgpu_state.read().unwrap();
+            let wgpu_state = init_data.world.read_resource::<WgpuState>();
             let image_data = UIImageRenderData::new(&mut init_data.res_mgr, &*wgpu_state);
             Self {
                 image_data,
-                wgpu_state: init_data.wgpu_state.clone()
             }
         }
 
     }
 
     impl<'a> System<'a> for UIRenderSystem {
-        type SystemData = (WriteExpect<'a, FontRuntimeData>, ReadExpect<'a, ResManager>, WriteStorage<'a, Canvas>);
+        type SystemData = (ReadExpect<'a, WgpuState>, WriteExpect<'a, FontRuntimeData>, ReadExpect<'a, ResManager>, WriteStorage<'a, Canvas>);
 
-        fn run(&mut self, (mut font_data, res_mgr, mut canvas_write): Self::SystemData) {
-            let wgpu_state = self.wgpu_state.read().unwrap();
+        fn run(&mut self, (wgpu_state, mut font_data, res_mgr, mut canvas_write): Self::SystemData) {
             let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: None
             });

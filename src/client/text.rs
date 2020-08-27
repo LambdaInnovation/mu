@@ -48,15 +48,12 @@ impl Component for WorldText {
 mod internal {
     use super::*;
 
-    pub struct WorldTextRenderSystem {
-        pub wgpu_state: WgpuStateCell
-    }
+    pub struct WorldTextRenderSystem {}
 
     impl<'a> System<'a> for WorldTextRenderSystem {
-        type SystemData = (WriteExpect<'a, FontRuntimeData>, ReadStorage<'a, WorldText>, ReadStorage<'a, Transform>);
+        type SystemData = (ReadExpect<'a, WgpuState>, WriteExpect<'a, FontRuntimeData>, ReadStorage<'a, WorldText>, ReadStorage<'a, Transform>);
 
-        fn run(&mut self, (mut font_data, world_text_read, transform_read): Self::SystemData) {
-            let wgpu_state = self.wgpu_state.read().unwrap();
+        fn run(&mut self, (wgpu_state, mut font_data, world_text_read, transform_read): Self::SystemData) {
             let ref mut glyph_brush = font_data.glyph_brush;
 
             with_render_data(|rd| {
@@ -95,15 +92,13 @@ impl Module for TextModule {
             InsertInfo::new("")
                 .after(&[DEP_CAM_DRAW_SETUP])
                 .before(&[DEP_CAM_DRAW_TEARDOWN]),
-            |d, i| i.insert_thread_local(internal::WorldTextRenderSystem {
-                wgpu_state: d.wgpu_state.clone()
-            })
+            |_, i| i.insert_thread_local(internal::WorldTextRenderSystem {})
         );
     }
 
     fn start(&self, start_data: &mut StartContext) {
         let init_data = start_data.world.read_resource::<FontInitData>();
-        let wgpu_state = start_data.wgpu_state.read().unwrap();
+        let wgpu_state = start_data.world.read_resource::<WgpuState>();
 
         let v = init_data.fonts.iter().collect::<Vec<_>>();
 
@@ -121,6 +116,7 @@ impl Module for TextModule {
         };
 
         drop(init_data);
+        drop(wgpu_state);
         start_data.world.insert(rt_data);
     }
 }

@@ -190,7 +190,7 @@ impl Module for MyModule {
     }
 
     fn start(&self, ctx: &mut StartContext) {
-        let wgpu_state = ctx.wgpu_state.read().unwrap();
+        let wgpu_state = ctx.world.read_resource::<WgpuState>();
         let sprite_sheet_ref = {
             let mut res_mgr = ctx.world.write_resource::<ResManager>();
             load_sprite_sheet(&mut *res_mgr, &wgpu_state, "texture/kasumi.sheet.json").unwrap()
@@ -203,6 +203,7 @@ impl Module for MyModule {
         };
         let close_sprite_ref = SpriteRef::new(&close_sheet_ref, 0);
 
+        drop(wgpu_state);
         ctx.world.insert(DialogResources {
             default_sprite: sprite_ref,
             close_sprite: close_sprite_ref

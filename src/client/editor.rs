@@ -86,32 +86,26 @@ impl<'a> System<'a> for EditorUISetupSystem {
 
 struct EditorUITeardownSystem {
     renderer: Renderer,
-    wgpu_state: WgpuStateCell
 }
 
 impl EditorUITeardownSystem {
-    pub fn new(context: &mut imgui::Context, wgpu_state_cell: WgpuStateCell) -> EditorUITeardownSystem {
-        let renderer = {
-            let wgpu_state = wgpu_state_cell.read().unwrap();
-            Renderer::new(context, &wgpu_state.device, &wgpu_state.queue, wgpu_state.sc_desc.format, None)
-        };
+    pub fn new(context: &mut imgui::Context, wgpu_state: &WgpuState) -> EditorUITeardownSystem {
+        let renderer =
+            Renderer::new(context, &wgpu_state.device, &wgpu_state.queue, wgpu_state.sc_desc.format, None);
         Self {
-            renderer ,
-            wgpu_state: wgpu_state_cell
+            renderer,
         }
     }
 }
 
 impl<'a> System<'a> for EditorUITeardownSystem {
-    type SystemData = ();
+    type SystemData = ReadExpect<'a, WgpuState>;
 
-    fn run(&mut self, _: Self::SystemData) {
+    fn run(&mut self, wgpu_state: Self::SystemData) {
         let ui_opt = unsafe { FRAME.take() };
         match ui_opt {
             Some(ui) => {
                 let draw_data = ui.render();
-                let wgpu_state = self.wgpu_state.read().unwrap();
-
                 let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("Mu editor")
                 });
@@ -151,10 +145,10 @@ impl Module for EditorModule {
         {
             let insert_info = InsertInfo::new(DEP_TEARDOWN).after(&[DEP_SETUP]);
             let sys = EditorUITeardownSystem::new(&mut ctx,
-                                                  init_ctx.init_data.wgpu_state.clone());
+                                                  &*init_ctx.init_data.world.read_resource());
             init_ctx.group_thread_local.dispatch(
                 insert_info,
-                move |_, f| f.insert_thread_local(sys)
+                move |_, i| i.insert_thread_local(sys)
             );
         }
 

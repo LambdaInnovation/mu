@@ -702,21 +702,16 @@ impl Material {
 
 mod internal {
     use super::*;
-    use crate::WgpuStateCell;
 
-    pub struct SysRenderPrepare {
-        pub wgpu_state: WgpuStateCell,
-    }
+    pub struct SysRenderPrepare {}
 
-    pub struct SysRenderTeardown {
-        pub wgpu_state: WgpuStateCell
-    }
+    pub struct SysRenderTeardown {}
 
     impl<'a> System<'a> for SysRenderPrepare {
-        type SystemData = (ReadExpect<'a, WindowInfo>, Entities<'a>, ReadStorage<'a, Camera>, ReadStorage<'a, Transform>);
+        type SystemData = (ReadExpect<'a, WindowInfo>, ReadExpect<'a, WgpuState>,
+                           Entities<'a>, ReadStorage<'a, Camera>, ReadStorage<'a, Transform>);
 
-        fn run(&mut self, (window_info, entities, cameras, transforms): Self::SystemData) {
-            let wgpu_state = self.wgpu_state.read().unwrap();
+        fn run(&mut self, (window_info, wgpu_state, entities, cameras, transforms): Self::SystemData) {
             // let mut frame = self.display.draw();
             // Calculate wvp matrix
             let aspect: f32 = window_info.get_aspect_ratio();
@@ -785,11 +780,10 @@ mod internal {
     }
 
     impl<'a> System<'a> for SysRenderTeardown {
-        type SystemData = ();
+        type SystemData = ReadExpect<'a, WgpuState>;
 
-        fn run(&mut self, _: Self::SystemData) {
+        fn run(&mut self, wgpu_state: Self::SystemData) {
             let result = clear_render_data();
-            let wgpu_state = self.wgpu_state.read().unwrap();
             wgpu_state.queue.submit(
                 &result.camera_infos
                     .into_iter()
@@ -809,18 +803,12 @@ impl Module for GraphicsModule {
                 InsertInfo::new(DEP_CAM_DRAW_SETUP)
                     .before(&[DEP_CAM_DRAW_TEARDOWN])
                     .order(100),
-                move |init_data, f| {
-                    f.insert_thread_local(internal::SysRenderPrepare {
-                        wgpu_state: init_data.wgpu_state.clone()
-                    })
-                },
+                move |_, i| { i.insert_thread_local(internal::SysRenderPrepare {}) },
             );
         }
         init_data.dispatch_thread_local(
             InsertInfo::new(DEP_CAM_DRAW_TEARDOWN).after(&[DEP_CAM_DRAW_SETUP]),
-            |init_data, f| f.insert_thread_local(internal::SysRenderTeardown {
-                wgpu_state: init_data.wgpu_state.clone()
-            }),
+            |_, i| i.insert_thread_local(internal::SysRenderTeardown {}),
         );
     }
 

@@ -4,7 +4,7 @@ use serde_json::Value;
 use crate::asset::*;
 use crate::client::sprite::{SpriteRenderer};
 use crate::resource::ResManager;
-use crate::{WgpuState, WgpuStateCell, Module, InitContext, InsertInfo};
+use crate::{WgpuState, Module, InitContext, InsertInfo};
 
 pub struct EntityLoadContext<'a> {
     pub entities: Vec<Entity>,
@@ -28,11 +28,10 @@ pub type EntityLoadRequests = Vec<EntityLoadRequest>;
 struct AllComponentsWrite<'a> {
     pub has_parent_write: WriteStorage<'a, HasParent>,
     pub transform_write:  WriteStorage<'a, Transform>,
-    pub sprite_renderer_write: WriteStorage<'a, SpriteRenderer>
+    pub sprite_renderer_write: WriteStorage<'a, SpriteRenderer>,
 }
 
 struct DefaultSerializeSystem {
-    wgpu_state: WgpuStateCell
 }
 
 impl DefaultSerializeSystem {
@@ -68,9 +67,12 @@ impl DefaultSerializeSystem {
 }
 
 impl<'a> System<'a> for DefaultSerializeSystem {
-    type SystemData = (AllComponentsWrite<'a>, WriteExpect<'a, EntityLoadRequests>, Entities<'a>, WriteExpect<'a, ResManager>);
+    type SystemData = (AllComponentsWrite<'a>,
+        WriteExpect<'a, EntityLoadRequests>,
+        Entities<'a>, WriteExpect<'a, ResManager>,
+        ReadExpect<'a, WgpuState>);
 
-    fn run(&mut self, (mut cmpt_write, mut requests, entities, mut res_mgr): Self::SystemData) {
+    fn run(&mut self, (mut cmpt_write, mut requests, entities, mut res_mgr, wgpu_state): Self::SystemData) {
         for request in &*requests {
             let mut entity_vec = vec![];
 
@@ -85,7 +87,6 @@ impl<'a> System<'a> for DefaultSerializeSystem {
                 _ => panic!("Invalid root type")
             };
 
-            let wgpu_state = self.wgpu_state.read().unwrap();
             let mut ctx = EntityLoadContext {
                 entities: entity_vec,
                 resource_mgr: &mut *res_mgr,
@@ -111,9 +112,7 @@ impl Module for DefaultSerializeModule {
         ctx.init_data.world.insert(EntityLoadRequests::new());
         ctx.group_normal.dispatch(
             InsertInfo::new(""),
-            |d, i| i.insert(DefaultSerializeSystem {
-                wgpu_state: d.wgpu_state.clone()
-            })
+            |_, i| i.insert(DefaultSerializeSystem {})
         );
     }
 }

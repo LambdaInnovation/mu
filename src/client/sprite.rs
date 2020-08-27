@@ -183,8 +183,8 @@ impl Module for SpriteModule {
                 .before(&[graphics::DEP_CAM_DRAW_TEARDOWN])
                 .after(&[graphics::DEP_CAM_DRAW_SETUP])
                 .order(graphics::render_order::OPAQUE),
-            move |init_data, i| i.insert_thread_local(
-                SpriteRenderSystem::new(&mut init_data.res_mgr, init_data.wgpu_state.clone())));
+            move |d, i| i.insert_thread_local(SpriteRenderSystem::new(&mut d.res_mgr, &d.world))
+        );
     }
 }
 
@@ -229,15 +229,14 @@ struct SpriteRenderSystem {
     vbo: wgpu::Buffer,
     ibo: wgpu::Buffer,
     sprite_program: ResourceRef<ShaderProgram>,
-    wgpu_state: WgpuStateCell,
     material: Option<Material>,
     pipeline: wgpu::RenderPipeline
 }
 
 impl SpriteRenderSystem {
 
-    pub fn new(res_mgr: &mut ResManager, wgpu_state_cell: WgpuStateCell) -> Self {
-        let wgpu_state = wgpu_state_cell.read().unwrap();
+    pub fn new(res_mgr: &mut ResManager, world: &World) -> Self {
+        let wgpu_state = world.read_resource::<WgpuState>();
         let vert = include_str!("../../assets/sprite_default.vert");
         let frag = include_str!("../../assets/sprite_default.frag");
 
@@ -322,13 +321,12 @@ impl SpriteRenderSystem {
             vbo,
             ibo,
             sprite_program: program_ref,
-            wgpu_state: wgpu_state_cell,
             material: None,
             pipeline
         }
     }
 
-    fn _flush_current_batch(&mut self, res_mgr: &ResManager, batch: Batch) {
+    fn _flush_current_batch(&mut self, res_mgr: &ResManager, wgpu_state: &WgpuState, batch: Batch) {
         let sheet = res_mgr.get(&batch.sheet);
 
         let instance_data = (&batch.sprites).iter()
@@ -359,18 +357,13 @@ impl SpriteRenderSystem {
             })
             .collect::<Vec<_>>();
 
-        let instance_buf = {
-            let wgpu_state = self.wgpu_state.read().unwrap();
-            let instance_buf = wgpu_state.device.create_buffer_with_data(
-                bytemuck::cast_slice(&instance_data),
-                wgpu::BufferUsage::VERTEX
-            );
-            instance_buf
-        };
+        let instance_buf = wgpu_state.device.create_buffer_with_data(
+            bytemuck::cast_slice(&instance_data),
+            wgpu::BufferUsage::VERTEX
+        );
 
         graphics::with_render_data(|r| {
             let camera_infos = &mut r.camera_infos;
-            let wgpu_state = self.wgpu_state.read().unwrap();
 
             for cam in camera_infos {
 
@@ -387,7 +380,7 @@ impl SpriteRenderSystem {
                         properties.insert("u_sampler".to_string(), MatProperty::TextureSampler(sheet.texture.clone()));
                         self.material = Some(Material::create(
                             res_mgr,
-                            &*wgpu_state,
+                            wgpu_state,
                             self.sprite_program.clone(),
                             properties
                         ));
@@ -402,7 +395,7 @@ impl SpriteRenderSystem {
                 } else {
                 }
 
-                let mut render_pass = cam.render_pass(&*wgpu_state);
+                let mut render_pass = cam.render_pass(wgpu_state);
                 render_pass.set_pipeline(&self.pipeline);
                 render_pass.set_bind_group(0, bind_group, &[]);
                 render_pass.set_vertex_buffer(0, &self.vbo, 0, 0);
@@ -428,9 +421,9 @@ struct Batch {
 }
 
 impl<'a> System<'a> for SpriteRenderSystem {
-    type SystemData = (ReadExpect<'a, ResManager>, ReadStorage<'a, SpriteRenderer>, ReadStorage<'a, Transform>);
+    type SystemData = (ReadExpect<'a, WgpuState>, ReadExpect<'a, ResManager>, ReadStorage<'a, SpriteRenderer>, ReadStorage<'a, Transform>);
 
-    fn run(&mut self, (sprite_mgr, sr_vec, trans_vec): Self::SystemData) {
+    fn run(&mut self, (wgpu_state, sprite_mgr, sr_vec, trans_vec): Self::SystemData) {
         let mut cur_batch: Option<Batch> = None;
         for (trans, sr) in (&trans_vec, &sr_vec).join() {
             let world_view: Mat4 = math::Mat4::from_translation(trans.pos) * Mat4::from(trans.rot);
@@ -448,7 +441,7 @@ impl<'a> System<'a> for SpriteRenderSystem {
                     cur_taken.sprites.push(sprite_instance);
                     cur_batch = Some(cur_taken);
                 } else { // Can't batch, flush current && set now as now
-                    self._flush_current_batch(&sprite_mgr, cur_taken);
+                    self._flush_current_batch(&sprite_mgr, &*wgpu_state, cur_taken);
                     cur_batch = Some(Batch {
                         sheet: sr.sprite.sheet.clone(),
                         sprites: vec![sprite_instance],
@@ -466,7 +459,7 @@ impl<'a> System<'a> for SpriteRenderSystem {
 
         // Flush final batch
         if let Some(final_batch) = cur_batch.take() {
-            self._flush_current_batch(&sprite_mgr, final_batch);
+            self._flush_current_batch(&sprite_mgr, &*wgpu_state, final_batch);
         }
     }
 

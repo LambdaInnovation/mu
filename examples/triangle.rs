@@ -1,6 +1,6 @@
 use mu::*;
 use mu::client::graphics::*;
-use specs::System;
+use specs::{System, WorldExt};
 use specs::{ReadExpect};
 use mu::ecs::Time;
 use mu::client::graphics;
@@ -21,7 +21,6 @@ unsafe impl bytemuck::Pod for TriangleUniform {}
 unsafe impl bytemuck::Zeroable for TriangleUniform {}
 
 struct DrawTriangleSystem {
-    wgpu_states: WgpuStateCell,
     vbo: wgpu::Buffer,
     ibo: wgpu::Buffer,
     ubo: wgpu::Buffer,
@@ -32,10 +31,9 @@ struct DrawTriangleSystem {
 
 impl DrawTriangleSystem {
 
-    fn new(wgpu_states_ref: WgpuStateCell) -> Self {
+    fn new(wgpu_state: &WgpuState) -> Self {
         let program = {
-            let wgpu_states = wgpu_states_ref.read().unwrap();
-            load_shader(&wgpu_states.device, "shader/triangle.shader.json")
+            load_shader(&wgpu_state.device, "shader/triangle.shader.json")
         };
 
         let triangle = {
@@ -54,23 +52,22 @@ impl DrawTriangleSystem {
         let indices = [0u16, 1, 2];
 
         let (vbo, ibo, ubo, pipeline, bindgroup) = {
-            let wgpu_states = wgpu_states_ref.read().unwrap();
-            let vbo = wgpu_states.device.create_buffer_with_data(
+            let vbo = wgpu_state.device.create_buffer_with_data(
                 bytemuck::cast_slice(&triangle),
                 wgpu::BufferUsage::VERTEX
             );
 
-            let ibo = wgpu_states.device.create_buffer_with_data(
+            let ibo = wgpu_state.device.create_buffer_with_data(
                 bytemuck::cast_slice(&indices),
                 wgpu::BufferUsage::INDEX
             );
 
-            let ubo = wgpu_states.device.create_buffer_with_data(
+            let ubo = wgpu_state.device.create_buffer_with_data(
                 bytemuck::cast_slice(&[TriangleUniform { offset: [0., 0., 0.] }]),
                 wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST
             );
 
-            let uniform_bindgroup = wgpu_states.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let uniform_bindgroup = wgpu_state.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 layout: &program.bind_group_layout,
                 bindings: &[
                     wgpu::Binding {
@@ -84,11 +81,11 @@ impl DrawTriangleSystem {
                 label: None
             });
 
-            let render_pipeline_layout = wgpu_states.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            let render_pipeline_layout = wgpu_state.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 bind_group_layouts: &[&program.bind_group_layout],
             });
 
-            let pipeline = wgpu_states.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            let pipeline = wgpu_state.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 layout: &render_pipeline_layout,
                 vertex_stage: wgpu::ProgrammableStageDescriptor { module: &program.vertex, entry_point: "main" },
                 fragment_stage: Some(wgpu::ProgrammableStageDescriptor { module: &program.fragment, entry_point: "main" }),
@@ -96,7 +93,7 @@ impl DrawTriangleSystem {
                 primitive_topology: wgpu::PrimitiveTopology::TriangleList,
                 color_states: &[
                     wgpu::ColorStateDescriptor {
-                        format: wgpu_states.sc_desc.format,
+                        format: wgpu_state.sc_desc.format,
                         color_blend: wgpu::BlendDescriptor::REPLACE,
                         alpha_blend: wgpu::BlendDescriptor::REPLACE,
                         write_mask: wgpu::ColorWrite::ALL
@@ -116,7 +113,6 @@ impl DrawTriangleSystem {
         };
 
         Self {
-            wgpu_states: wgpu_states_ref,
             vbo,
             ibo,
             ubo,
@@ -129,21 +125,20 @@ impl DrawTriangleSystem {
 }
 
 impl<'a> System<'a> for DrawTriangleSystem {
-    type SystemData = ReadExpect<'a, Time>;
+    type SystemData = (ReadExpect<'a, WgpuState>, ReadExpect<'a, Time>);
 
-    fn run(&mut self, time: Self::SystemData) {
-        let wgpu_states = self.wgpu_states.read().unwrap();
+    fn run(&mut self, (wgpu_state, time): Self::SystemData) {
 
         let dt = (*time).get_delta_time();
         self.elapsed += dt;
 
         let offset_y = 0.5 * f32::sin(2. * self.elapsed);
-        let tmp_buffer = wgpu_states.device.create_buffer_with_data(
+        let tmp_buffer = wgpu_state.device.create_buffer_with_data(
             bytemuck::cast_slice(&[TriangleUniform { offset: [0., offset_y, 0. ] }]),
             wgpu::BufferUsage::COPY_SRC
         );
 
-        let mut encoder = wgpu_states.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: None
         });
         encoder.copy_buffer_to_buffer(&tmp_buffer, 0, &self.ubo, 0,
@@ -152,7 +147,7 @@ impl<'a> System<'a> for DrawTriangleSystem {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             color_attachments: &[
                 wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: &wgpu_states.frame_texture.as_ref().unwrap().view,
+                    attachment: &wgpu_state.frame_texture.as_ref().unwrap().view,
                     resolve_target: None,
                     load_op: wgpu::LoadOp::Clear,
                     store_op: wgpu::StoreOp::Store,
@@ -169,7 +164,7 @@ impl<'a> System<'a> for DrawTriangleSystem {
         render_pass.draw_indexed(0..3, 0, 0..1);
         drop(render_pass);
 
-        wgpu_states.queue.submit(&[encoder.finish()]);
+        wgpu_state.queue.submit(&[encoder.finish()]);
         //
         // let uniform = glium::uniform! {
         //         offset: (0.0, , 0.0)
@@ -185,7 +180,8 @@ impl mu::Module for TriangleModule {
                                             .after(&[graphics::DEP_CAM_DRAW_SETUP])
                                             .before(&[graphics::DEP_CAM_DRAW_TEARDOWN]),
             move |init_data, insert| {
-                let sys = DrawTriangleSystem::new(init_data.wgpu_state.clone());
+                let wgpu_state = init_data.world.read_resource::<WgpuState>();
+                let sys = DrawTriangleSystem::new(&*wgpu_state);
                 insert.insert_thread_local(sys);
             })
     }

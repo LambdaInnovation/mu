@@ -26,7 +26,6 @@ impl QuadVertex {
 impl_vertex!(QuadVertex, position => 0, uv => 1);
 
 struct DrawQuadSystem {
-    wgpu_state: WgpuStateCell,
     vbo: wgpu::Buffer,
     ibo: wgpu::Buffer,
     ubo: wgpu::Buffer,
@@ -36,8 +35,7 @@ struct DrawQuadSystem {
 
 impl DrawQuadSystem {
 
-    fn new(wgpu_states_cell: WgpuStateCell) -> Self {
-        let wgpu_state = wgpu_states_cell.read().unwrap();
+    fn new(wgpu_state: &WgpuState) -> Self {
         let program = load_shader(&wgpu_state.device, "shader/quad.shader.json");
         let texture = load_texture(&*wgpu_state, "texture/landscape.tex.json");
 
@@ -110,9 +108,7 @@ impl DrawQuadSystem {
             alpha_to_coverage_enabled: false
         });
 
-        drop(wgpu_state);
         Self {
-            wgpu_state: wgpu_states_cell,
             vbo,
             ibo,
             ubo,
@@ -124,13 +120,12 @@ impl DrawQuadSystem {
 }
 
 impl<'a> System<'a> for DrawQuadSystem {
-    type SystemData = ();
+    type SystemData = ReadExpect<'a, WgpuState>;
 
-    fn run(&mut self, _: Self::SystemData) {
+    fn run(&mut self, wgpu_state: Self::SystemData) {
         use std::mem;
         with_render_data(|r| {
             let cam_infos = &mut r.camera_infos;
-            let wgpu_state = self.wgpu_state.read().unwrap();
             for cam_info in cam_infos {
                 let wvp_mat_arr: [f32; 16] = math::mat::to_array(cam_info.wvp_matrix);
                 let tmp_mat_buf = wgpu_state.device.create_buffer_with_data(
@@ -195,7 +190,7 @@ impl Module for QuadModule {
         init_data.dispatch_thread_local(
             insert_info,
             move |init, i|
-                i.insert_thread_local(DrawQuadSystem::new(init.wgpu_state.clone())));
+                i.insert_thread_local(DrawQuadSystem::new(&*init.world.read_resource())));
     }
 
     fn start(&self, start_data: &mut StartContext) {

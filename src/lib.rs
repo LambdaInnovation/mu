@@ -23,7 +23,6 @@ pub extern crate log;
 pub use wgpu;
 pub use specs;
 pub use bytemuck;
-use std::sync::{Arc, RwLock};
 
 pub mod asset;
 pub mod resource;
@@ -255,7 +254,6 @@ impl<T: TDispatchItem> DispatchGroup<T> {
 }
 
 pub struct InitData {
-    pub wgpu_state: WgpuStateCell,
     pub res_mgr: ResManager,
     pub window: Rc<Window>,
     pub world: World
@@ -269,15 +267,14 @@ pub struct InitContext {
 }
 
 impl InitContext {
-    pub fn new(res_mgr: ResManager, wgpu_state: WgpuStateCell, window: Rc<Window>) -> InitContext {
+    pub fn new(res_mgr: ResManager, window: Rc<Window>, world: World) -> InitContext {
         InitContext {
             group_normal: DispatchGroup::new(),
             group_thread_local: DispatchGroup::new(),
             init_data: InitData {
-                wgpu_state,
                 res_mgr,
                 window,
-                world: World::new()
+                world
             }
         }
     }
@@ -329,7 +326,6 @@ impl InitContext {
 /// Data when just before game starts. Usually used to setup the world initial entities.
 pub struct StartContext<'a> {
     pub world: &'a mut specs::World,
-    pub wgpu_state: WgpuStateCell
 }
 
 /// Modules inject into the game's startup process, and are
@@ -374,14 +370,16 @@ impl RuntimeBuilder {
     }
 
     pub fn build(mut self) -> Runtime {
+        let mut world = World::new();
+
         // ======= WINDOWS CREATION =======
-        let client_data = futures::executor::block_on(ClientRuntimeData::new(self.name));
+        let client_data = futures::executor::block_on(ClientRuntimeData::create(self.name, &mut world));
 
         // ======= INIT =======
         let mut dispatcher_builder = specs::DispatcherBuilder::new();
         let res_mgr = ResManager::new();
         let mut init_ctx = crate::InitContext::new(
-            res_mgr, client_data.wgpu_state.clone(), client_data.window.clone());
+            res_mgr, client_data.window.clone(), world);
 
         // Default systems
         dispatcher_builder.add(HierarchySystem::<HasParent>::new(&mut init_ctx.init_data.world), "", &[]);
@@ -408,7 +406,6 @@ impl RuntimeBuilder {
         // ======= START =======
         let mut start_ctx = crate::StartContext {
             world: &mut world,
-            wgpu_state: client_data.wgpu_state.clone()
         };
         for game_module in &self.modules {
             game_module.start(&mut start_ctx);
@@ -470,26 +467,22 @@ impl WgpuState {
 
 }
 
-pub type WgpuStateCell = Arc<RwLock<WgpuState>>;
-
 pub struct ClientRuntimeData {
     event_loop: WindowEventLoop,
     window: Rc<Window>,
-    wgpu_state: WgpuStateCell
 }
 
 impl ClientRuntimeData {
 
-    async fn new(title: String) -> Self {
+    async fn create(title: String, world: &mut World) -> Self {
         let event_loop = WindowEventLoop::new();
         let wb = WindowBuilder::new().with_title(title);
         let window = Rc::new(wb.build(&event_loop).unwrap());
         let wgpu_state = WgpuState::new(&*window).await;
-        let wgpu_state = Arc::new(RwLock::new(wgpu_state));
+        world.insert(wgpu_state);
         Self {
             event_loop,
             window,
-            wgpu_state
         }
     }
 
@@ -508,7 +501,6 @@ impl Runtime {
         let mut dispatcher = self.dispatcher;
         let mut world = self.world;
         let window = self.client_data.window;
-        let wgpu_state = self.client_data.wgpu_state;
         self.client_data.event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
 
@@ -534,7 +526,7 @@ impl Runtime {
                 match event {
                     Event::LoopDestroyed => return,
                     Event::MainEventsCleared => {
-                        Self::update_one_frame(&*window, &mut world, &wgpu_state, &mut dispatcher);
+                        Self::update_one_frame(&*window, &mut world, &mut dispatcher);
                     },
                     Event::WindowEvent { event, .. } => {
                         let mut raw_input = world.write_resource::<RawInputData>();
@@ -544,7 +536,7 @@ impl Runtime {
                                 let mut window_info = world.write_resource::<WindowInfo>();
                                 window_info.pixel_size = (physical_size.width, physical_size.height);
 
-                                let mut ws = wgpu_state.write().unwrap();
+                                let mut ws = world.write_resource::<WgpuState>();
                                 ws.sc_desc.width = physical_size.width;
                                 ws.sc_desc.height = physical_size.height;
                                 ws.swap_chain = ws.device.create_swap_chain(&ws.surface, &ws.sc_desc);
@@ -567,7 +559,6 @@ impl Runtime {
 
     fn update_one_frame(window: &Window,
                         world: &mut World,
-                        wgpu_state_ref: &WgpuStateCell,
                         dispatcher: &mut Dispatcher<'static, 'static>) {
         { // DeltaTime update
             let mut time = world.write_resource::<ecs::Time>();
@@ -576,7 +567,7 @@ impl Runtime {
 
         // Swap texture
         {
-            let mut wgpu_state = wgpu_state_ref.write().unwrap();
+            let mut wgpu_state = world.write_resource::<WgpuState>();
             wgpu_state.frame_texture = Some(wgpu_state.swap_chain.get_next_texture().unwrap());
 
             let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -604,7 +595,7 @@ impl Runtime {
         world.maintain();
 
         {
-            let mut wgpu_state = wgpu_state_ref.write().unwrap();
+            let mut wgpu_state = world.write_resource::<WgpuState>();
             wgpu_state.frame_texture = None;
         }
 

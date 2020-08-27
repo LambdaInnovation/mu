@@ -13,7 +13,7 @@ impl Module for MyModule {
         let (spr_main, spr_lu, spr_ld, spr_ru, spr_rd) = {
             let mut res_mgr = start_data.world.write_resource::<ResManager>();
 
-            let wgpu_state = (*start_data.wgpu_state).read().unwrap();
+            let wgpu_state = start_data.world.read_resource::<WgpuState>();
             let sheet_ref = load_sprite_sheet(&mut res_mgr, &*wgpu_state, "texture/test_grid.sheet.json")
                 .unwrap();
 
