@@ -92,7 +92,7 @@ struct EditorUITeardownSystem {
 impl EditorUITeardownSystem {
     pub fn new(context: &mut imgui::Context, wgpu_state_cell: WgpuStateCell) -> EditorUITeardownSystem {
         let renderer = {
-            let wgpu_state = wgpu_state_cell.borrow();
+            let wgpu_state = wgpu_state_cell.read().unwrap();
             Renderer::new(context, &wgpu_state.device, &wgpu_state.queue, wgpu_state.sc_desc.format, None)
         };
         Self {
@@ -110,7 +110,7 @@ impl<'a> System<'a> for EditorUITeardownSystem {
         match ui_opt {
             Some(ui) => {
                 let draw_data = ui.render();
-                let wgpu_state = self.wgpu_state.borrow();
+                let wgpu_state = self.wgpu_state.read().unwrap();
 
                 let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("Mu editor")

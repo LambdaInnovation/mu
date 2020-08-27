@@ -15,7 +15,6 @@ use crate::ecs::{Time, HasParent};
 use crate::util::Color;
 use std::sync::atomic::{AtomicBool, Ordering};
 use specs_hierarchy::HierarchySystem;
-use std::cell::RefCell;
 
 pub type WindowEventLoop = event_loop::EventLoop<()>;
 
@@ -24,6 +23,7 @@ pub extern crate log;
 pub use wgpu;
 pub use specs;
 pub use bytemuck;
+use std::sync::{Arc, RwLock};
 
 pub mod asset;
 pub mod resource;
@@ -255,7 +255,7 @@ impl<T: TDispatchItem> DispatchGroup<T> {
 }
 
 pub struct InitData {
-    pub wgpu_state: Rc<RefCell<WgpuState>>,
+    pub wgpu_state: WgpuStateCell,
     pub res_mgr: ResManager,
     pub window: Rc<Window>,
     pub world: World
@@ -269,7 +269,7 @@ pub struct InitContext {
 }
 
 impl InitContext {
-    pub fn new(res_mgr: ResManager, wgpu_state: Rc<RefCell<WgpuState>>, window: Rc<Window>) -> InitContext {
+    pub fn new(res_mgr: ResManager, wgpu_state: WgpuStateCell, window: Rc<Window>) -> InitContext {
         InitContext {
             group_normal: DispatchGroup::new(),
             group_thread_local: DispatchGroup::new(),
@@ -470,12 +470,12 @@ impl WgpuState {
 
 }
 
-pub type WgpuStateCell = Rc<RefCell<WgpuState>>;
+pub type WgpuStateCell = Arc<RwLock<WgpuState>>;
 
 pub struct ClientRuntimeData {
     event_loop: WindowEventLoop,
     window: Rc<Window>,
-    wgpu_state: Rc<RefCell<WgpuState>>
+    wgpu_state: WgpuStateCell
 }
 
 impl ClientRuntimeData {
@@ -485,7 +485,7 @@ impl ClientRuntimeData {
         let wb = WindowBuilder::new().with_title(title);
         let window = Rc::new(wb.build(&event_loop).unwrap());
         let wgpu_state = WgpuState::new(&*window).await;
-        let wgpu_state = Rc::new(RefCell::new(wgpu_state));
+        let wgpu_state = Arc::new(RwLock::new(wgpu_state));
         Self {
             event_loop,
             window,
@@ -544,7 +544,7 @@ impl Runtime {
                                 let mut window_info = world.write_resource::<WindowInfo>();
                                 window_info.pixel_size = (physical_size.width, physical_size.height);
 
-                                let mut ws = wgpu_state.borrow_mut();
+                                let mut ws = wgpu_state.write().unwrap();
                                 ws.sc_desc.width = physical_size.width;
                                 ws.sc_desc.height = physical_size.height;
                                 ws.swap_chain = ws.device.create_swap_chain(&ws.surface, &ws.sc_desc);
@@ -567,7 +567,7 @@ impl Runtime {
 
     fn update_one_frame(window: &Window,
                         world: &mut World,
-                        wgpu_state_ref: &Rc<RefCell<WgpuState>>,
+                        wgpu_state_ref: &WgpuStateCell,
                         dispatcher: &mut Dispatcher<'static, 'static>) {
         { // DeltaTime update
             let mut time = world.write_resource::<ecs::Time>();
@@ -576,7 +576,7 @@ impl Runtime {
 
         // Swap texture
         {
-            let mut wgpu_state = wgpu_state_ref.borrow_mut();
+            let mut wgpu_state = wgpu_state_ref.write().unwrap();
             wgpu_state.frame_texture = Some(wgpu_state.swap_chain.get_next_texture().unwrap());
 
             let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -604,7 +604,7 @@ impl Runtime {
         world.maintain();
 
         {
-            let mut wgpu_state = wgpu_state_ref.borrow_mut();
+            let mut wgpu_state = wgpu_state_ref.write().unwrap();
             wgpu_state.frame_texture = None;
         }
 

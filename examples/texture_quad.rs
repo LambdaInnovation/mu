@@ -37,7 +37,7 @@ struct DrawQuadSystem {
 impl DrawQuadSystem {
 
     fn new(wgpu_states_cell: WgpuStateCell) -> Self {
-        let wgpu_state = wgpu_states_cell.borrow();
+        let wgpu_state = wgpu_states_cell.read().unwrap();
         let program = load_shader(&wgpu_state.device, "shader/quad.shader.json");
         let texture = load_texture(&*wgpu_state, "texture/landscape.tex.json");
 
@@ -130,7 +130,7 @@ impl<'a> System<'a> for DrawQuadSystem {
         use std::mem;
         with_render_data(|r| {
             let cam_infos = &mut r.camera_infos;
-            let wgpu_state = self.wgpu_state.borrow();
+            let wgpu_state = self.wgpu_state.read().unwrap();
             for cam_info in cam_infos {
                 let wvp_mat_arr: [f32; 16] = math::mat::to_array(cam_info.wvp_matrix);
                 let tmp_mat_buf = wgpu_state.device.create_buffer_with_data(

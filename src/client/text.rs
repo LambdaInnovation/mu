@@ -56,7 +56,7 @@ mod internal {
         type SystemData = (WriteExpect<'a, FontRuntimeData>, ReadStorage<'a, WorldText>, ReadStorage<'a, Transform>);
 
         fn run(&mut self, (mut font_data, world_text_read, transform_read): Self::SystemData) {
-            let wgpu_state = self.wgpu_state.borrow();
+            let wgpu_state = self.wgpu_state.read().unwrap();
             let ref mut glyph_brush = font_data.glyph_brush;
 
             with_render_data(|rd| {
@@ -103,7 +103,7 @@ impl Module for TextModule {
 
     fn start(&self, start_data: &mut StartContext) {
         let init_data = start_data.world.read_resource::<FontInitData>();
-        let wgpu_state = start_data.wgpu_state.borrow();
+        let wgpu_state = start_data.wgpu_state.read().unwrap();
 
         let v = init_data.fonts.iter().collect::<Vec<_>>();
 

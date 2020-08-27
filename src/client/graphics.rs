@@ -716,7 +716,7 @@ mod internal {
         type SystemData = (ReadExpect<'a, WindowInfo>, Entities<'a>, ReadStorage<'a, Camera>, ReadStorage<'a, Transform>);
 
         fn run(&mut self, (window_info, entities, cameras, transforms): Self::SystemData) {
-            let wgpu_state = self.wgpu_state.borrow();
+            let wgpu_state = self.wgpu_state.read().unwrap();
             // let mut frame = self.display.draw();
             // Calculate wvp matrix
             let aspect: f32 = window_info.get_aspect_ratio();
@@ -789,7 +789,7 @@ mod internal {
 
         fn run(&mut self, _: Self::SystemData) {
             let result = clear_render_data();
-            let wgpu_state = self.wgpu_state.borrow();
+            let wgpu_state = self.wgpu_state.read().unwrap();
             wgpu_state.queue.submit(
                 &result.camera_infos
                     .into_iter()

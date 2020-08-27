@@ -237,7 +237,7 @@ struct SpriteRenderSystem {
 impl SpriteRenderSystem {
 
     pub fn new(res_mgr: &mut ResManager, wgpu_state_cell: WgpuStateCell) -> Self {
-        let wgpu_state = wgpu_state_cell.borrow();
+        let wgpu_state = wgpu_state_cell.read().unwrap();
         let vert = include_str!("../../assets/sprite_default.vert");
         let frag = include_str!("../../assets/sprite_default.frag");
 
@@ -360,7 +360,7 @@ impl SpriteRenderSystem {
             .collect::<Vec<_>>();
 
         let instance_buf = {
-            let wgpu_state = self.wgpu_state.borrow();
+            let wgpu_state = self.wgpu_state.read().unwrap();
             let instance_buf = wgpu_state.device.create_buffer_with_data(
                 bytemuck::cast_slice(&instance_data),
                 wgpu::BufferUsage::VERTEX
@@ -370,7 +370,7 @@ impl SpriteRenderSystem {
 
         graphics::with_render_data(|r| {
             let camera_infos = &mut r.camera_infos;
-            let wgpu_state = self.wgpu_state.borrow();
+            let wgpu_state = self.wgpu_state.read().unwrap();
 
             for cam in camera_infos {
 

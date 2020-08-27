@@ -3,8 +3,6 @@ use mu::client::graphics::*;
 use specs::System;
 use specs::{ReadExpect};
 use mu::ecs::Time;
-use std::cell::RefCell;
-use std::rc::Rc;
 use mu::client::graphics;
 use mu::util::Color;
 
@@ -34,9 +32,9 @@ struct DrawTriangleSystem {
 
 impl DrawTriangleSystem {
 
-    fn new(wgpu_states_ref: Rc<RefCell<WgpuState>>) -> Self {
+    fn new(wgpu_states_ref: WgpuStateCell) -> Self {
         let program = {
-            let wgpu_states = wgpu_states_ref.borrow();
+            let wgpu_states = wgpu_states_ref.read().unwrap();
             load_shader(&wgpu_states.device, "shader/triangle.shader.json")
         };
 
@@ -56,7 +54,7 @@ impl DrawTriangleSystem {
         let indices = [0u16, 1, 2];
 
         let (vbo, ibo, ubo, pipeline, bindgroup) = {
-            let wgpu_states = wgpu_states_ref.borrow();
+            let wgpu_states = wgpu_states_ref.read().unwrap();
             let vbo = wgpu_states.device.create_buffer_with_data(
                 bytemuck::cast_slice(&triangle),
                 wgpu::BufferUsage::VERTEX
@@ -134,7 +132,7 @@ impl<'a> System<'a> for DrawTriangleSystem {
     type SystemData = ReadExpect<'a, Time>;
 
     fn run(&mut self, time: Self::SystemData) {
-        let wgpu_states = self.wgpu_states.borrow();
+        let wgpu_states = self.wgpu_states.read().unwrap();
 
         let dt = (*time).get_delta_time();
         self.elapsed += dt;

@@ -190,7 +190,7 @@ impl Module for MyModule {
     }
 
     fn start(&self, ctx: &mut StartContext) {
-        let wgpu_state = ctx.wgpu_state.borrow();
+        let wgpu_state = ctx.wgpu_state.read().unwrap();
         let sprite_sheet_ref = {
             let mut res_mgr = ctx.world.write_resource::<ResManager>();
             load_sprite_sheet(&mut *res_mgr, &wgpu_state, "texture/kasumi.sheet.json").unwrap()

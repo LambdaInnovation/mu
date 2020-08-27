@@ -85,7 +85,7 @@ impl<'a> System<'a> for DefaultSerializeSystem {
                 _ => panic!("Invalid root type")
             };
 
-            let wgpu_state = self.wgpu_state.borrow();
+            let wgpu_state = self.wgpu_state.read().unwrap();
             let mut ctx = EntityLoadContext {
                 entities: entity_vec,
                 resource_mgr: &mut *res_mgr,
@@ -109,9 +109,9 @@ pub struct DefaultSerializeModule;
 impl Module for DefaultSerializeModule {
     fn init(&self, ctx: &mut InitContext) {
         ctx.init_data.world.insert(EntityLoadRequests::new());
-        ctx.group_thread_local.dispatch(
+        ctx.group_normal.dispatch(
             InsertInfo::new(""),
-            |d, i| i.insert_thread_local(DefaultSerializeSystem {
+            |d, i| i.insert(DefaultSerializeSystem {
                 wgpu_state: d.wgpu_state.clone()
             })
         );
