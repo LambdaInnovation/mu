@@ -1,7 +1,7 @@
 use std::io;
 
-use serde::Deserialize;
 use serde_json;
+use serde::{Serialize, Deserialize};
 use specs::prelude::*;
 use specs::Join;
 
@@ -14,6 +14,8 @@ use crate::math::*;
 use crate::util::Color;
 use crate::resource::{ResourceRef, ResManager};
 use std::collections::HashMap;
+use crate::proto::{ComponentS11n, EntityLoadContext};
+use serde_json::Value;
 
 #[derive(Clone, Deserialize)]
 pub struct SpriteConfig {
@@ -57,6 +59,7 @@ pub struct SpriteSheet {
     pub sprites: Vec<Sprite>,
     pub texture: ResourceRef<Texture>,
     pub ppu: u32,
+    pub path: Option<String>
 }
 
 impl SpriteSheet {
@@ -74,6 +77,12 @@ pub struct SpriteRef {
     pub idx: usize,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct SpriteRefS11n {
+    pub sheet: String,
+    pub idx: usize
+}
+
 impl SpriteRef {
 
     pub fn from_name(res_mgr: &ResManager, sheet: &ResourceRef<SpriteSheet>, name: &str) -> Option<Self> {
@@ -87,35 +96,47 @@ impl SpriteRef {
             idx
         }
     }
+
+    pub fn load(v: Value, ctx: &mut EntityLoadContext) -> Self {
+        let s11n: SpriteRefS11n = serde_json::from_value(v).unwrap();
+        let sheet = load_sprite_sheet(ctx.resource_mgr, ctx.wgpu_state, &s11n.sheet).unwrap();
+        SpriteRef::new(&sheet, s11n.idx)
+    }
 }
 
 pub fn load_sprite_sheet(res_mgr: &mut ResManager, wgpu_state: &WgpuState, path: &str) -> io::Result<ResourceRef<SpriteSheet>> {
-    let config: SpriteSheetConfig = asset::load_asset(path)?;
-    let texture = graphics::load_texture(wgpu_state,
-                                         &asset::get_asset_path_local(&config._path, &config.texture));
-    let (tex_width, tex_height) = (texture.size.width as f32, texture.size.height as f32);
+    let key = get_path_hash(path);
+    if let Some(ret) = res_mgr.get_by_key(key) {
+        Ok(ret)
+    } else {
+        let config: SpriteSheetConfig = asset::load_asset(path)?;
+        let texture = graphics::load_texture(wgpu_state,
+                                             &asset::get_asset_path_local(&config._path, &config.texture));
+        let (tex_width, tex_height) = (texture.size.width as f32, texture.size.height as f32);
 
-    let sprites: Vec<Sprite> = (&config.sprites).into_iter()
-        .map(|x| {
-            let tuv1: Vec2 = x.pos - x.size * 0.5;
-            let tuv2: Vec2 = x.pos + x.size * 0.5;
+        let sprites: Vec<Sprite> = (&config.sprites).into_iter()
+            .map(|x| {
+                let tuv1: Vec2 = x.pos - x.size * 0.5;
+                let tuv2: Vec2 = x.pos + x.size * 0.5;
 
-            let u1 = tuv1.x / tex_width;
-            let v1 = tuv2.y / tex_height;
-            let u2 = tuv2.x / tex_width;
-            let v2 = tuv1.y / tex_height;
+                let u1 = tuv1.x / tex_width;
+                let v1 = tuv2.y / tex_height;
+                let u2 = tuv2.x / tex_width;
+                let v2 = tuv1.y / tex_height;
 
-            Sprite { config: x.clone(), uv_min: vec2(u1, v1), uv_max: vec2(u2, v2) }
-        })
-        .collect();
+                Sprite { config: x.clone(), uv_min: vec2(u1, v1), uv_max: vec2(u2, v2) }
+            })
+            .collect();
 
-    let sheet = SpriteSheet {
-        texture: res_mgr.add(texture),
-        sprites,
-        ppu: config.ppu,
-    };
+        let sheet = SpriteSheet {
+            texture: res_mgr.add(texture),
+            sprites,
+            ppu: config.ppu,
+            path: Some(path.to_string())
+        };
 
-    Ok(res_mgr.add(sheet))
+        Ok(res_mgr.add_by_key(sheet, key))
+    }
 }
 
 pub struct SpriteRenderer {
@@ -138,6 +159,19 @@ impl SpriteRenderer {
 
 impl Component for SpriteRenderer {
     type Storage = VecStorage<Self>;
+}
+
+impl ComponentS11n for SpriteRenderer {
+    fn load(mut data: Value, ctx: &mut EntityLoadContext) -> Self {
+        let color: Color = serde_json::from_value(data["color"].take()).unwrap();
+        let sprite_ref = SpriteRef::load(data["sprite"].take(), ctx);
+
+        Self {
+            color,
+            sprite: sprite_ref,
+            material: None
+        }
+    }
 }
 
 pub struct SpriteModule;

@@ -1,8 +1,23 @@
 [
   {
     "Transform": {
-      "pos": [0.0, 1.0, 0.0],
-      "rot": [0.0, 0.0, 0.0, 1.0]
+      "pos": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    },
+    "SpriteRenderer": {
+      "color": {
+        "r": 1.0,
+        "g": 0.8,
+        "b": 0.5,
+        "a": 1.0
+      },
+      "sprite": {
+        "sheet": "texture/test_grid.sheet.json",
+        "idx": 0
+      }
     }
   }
 ]

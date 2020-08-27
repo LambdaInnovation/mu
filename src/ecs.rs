@@ -40,8 +40,18 @@ impl Time {
 /// A generic 3d transform.
 #[derive(Serialize, Deserialize)]
 pub struct Transform {
+    #[serde(default="_vec3_zero")]
     pub pos: Vec3,
+    #[serde(default="_quat_identity")]
     pub rot: Quaternion,
+}
+
+fn _vec3_zero() -> Vec3 {
+    Vec3::zero()
+}
+
+fn _quat_identity() -> Quaternion {
+    Quaternion::one()
 }
 
 impl Transform {
@@ -78,7 +88,7 @@ impl Component for Transform {
 // TODO: Can be auto-derived
 impl ComponentS11n for Transform {
 
-    fn load(data: Value, _ctx: &EntityLoadContext) -> Self {
+    fn load(data: Value, _ctx: &mut EntityLoadContext) -> Self {
         serde_json::from_value(data).unwrap()
     }
 
@@ -115,7 +125,7 @@ pub struct HasParentS11n {
 }
 
 impl ComponentS11n for HasParent {
-    fn load(data: Value, ctx: &EntityLoadContext) -> Self {
+    fn load(data: Value, ctx: &mut EntityLoadContext) -> Self {
         let tmp: HasParentS11n = serde_json::from_value(data).unwrap();
         let entity = ctx.entities[tmp.entity_ix].clone();
         HasParent {

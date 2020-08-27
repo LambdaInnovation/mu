@@ -1,6 +1,8 @@
 use std::fs;
 use std::io;
 use std::path::Path as Path;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::Hasher;
 
 static mut BASE_ASSET_PATH: &str = "./assets/";
 
@@ -39,6 +41,12 @@ pub fn get_asset_path_local(base_dir: &str, path: &str) -> String {
     } else {
         format!("{ }/{}", base_dir, path)
     }
+}
+
+pub fn get_path_hash(s: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    hasher.write(s.as_bytes());
+    hasher.finish()
 }
 
 impl LoadableAsset for String {

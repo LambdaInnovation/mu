@@ -57,6 +57,8 @@ impl<T: 'static> Clone for ResourceRef<T> {
     }
 }
 
+pub type ResourceKey = u64;
+
 struct ResourceEntry<T> {
     resource: T,
     ref_cnt: Arc<AtomicU32>
@@ -65,6 +67,7 @@ struct ResourceEntry<T> {
 pub struct ResourcePool<T> where T: 'static {
     entries: Vec<Option<ResourceEntry<T>>>,
     free_indices: Vec<usize>,
+    res_mapping: HashMap<ResourceKey, usize>
 }
 
 impl<T: 'static + Send + Sync> ThreadedResPool for ResourcePool<T> {}
@@ -91,8 +94,30 @@ impl<T> ResourcePool<T> where T: 'static {
     pub fn new() -> Self {
         Self {
             entries: vec![],
-            free_indices: vec![]
+            free_indices: vec![],
+            res_mapping: HashMap::new()
         }
+    }
+
+    pub fn get_by_key(&self, k: ResourceKey) -> Option<ResourceRef<T>> {
+        self.res_mapping.get(&k)
+            .map(|v| {
+                let entry = self.entries[*v].as_ref().unwrap();
+                entry.ref_cnt.fetch_add(1, Ordering::SeqCst);
+
+                ResourceRef {
+                    idx: *v,
+                    type_id: TypeId::of::<T>(),
+                    ref_cnt: entry.ref_cnt.clone(),
+                    marker: PhantomData
+                }
+            })
+    }
+
+    pub fn add_by_key(&mut self, res: T, key: ResourceKey) -> ResourceRef<T> {
+        let r = self.add(res);
+        self.res_mapping.insert(key, r.idx);
+        r
     }
 
     pub fn add(&mut self, res: T) -> ResourceRef<T> {
@@ -129,6 +154,7 @@ impl<T> ResourcePool<T> where T: 'static {
 
 impl<T> ResPool for ResourcePool<T> where T: 'static {
     fn cleanup(&mut self) {
+        let mut has_remove = false;
         for (ix, item) in (&mut self.entries).iter_mut().enumerate() {
             let need_remove = match item {
                 Some(x) if x.ref_cnt.load(Ordering::SeqCst) == 0 => true,
@@ -139,10 +165,18 @@ impl<T> ResPool for ResourcePool<T> where T: 'static {
                 info!("Cleanup asset of type {}", type_name::<T>());
                 item.take();
                 self.free_indices.push(ix);
+                has_remove = true;
             } else {
                 // info!("type {} ptr={:?}", type_name::<T>(),
                 //       (&item).as_ref().map(|x| x.ref_cnt.load(Ordering::SeqCst)));
             }
+        }
+
+        if has_remove {
+            self.res_mapping = self.res_mapping.iter()
+                .filter(|(_, v)| self.entries[**v].is_none())
+                .map(|(k, v)| (*k, *v))
+                .collect();
         }
     }
 
@@ -214,6 +248,18 @@ impl ResourceManager<dyn ResPool> {
 
 impl ResourceManager<dyn ThreadedResPool> {
 
+    pub fn add_by_key<T: 'static + Send + Sync>(&mut self, res: T, key: ResourceKey)
+        -> ResourceRef<T> {
+        let type_id = TypeId::of::<T>();
+        if !self.map.contains_key(&type_id) {
+            let res_pool: ResourcePool<T> = ResourcePool::new();
+            self.map.insert(type_id, Box::new(res_pool));
+        }
+
+        let pool: &mut ResourcePool<T> = self.map.get_mut(&type_id).unwrap().as_any_mut().downcast_mut().unwrap();
+        pool.add_by_key(res, key)
+    }
+
     pub fn add<T: 'static + Send + Sync>(&mut self, res: T) -> ResourceRef<T> {
         let type_id = TypeId::of::<T>();
         if !self.map.contains_key(&type_id) {
@@ -255,6 +301,14 @@ impl<R: ResPool + ?Sized> ResourceManager<R> {
     pub fn get<T: 'static>(&self, res_ref: &ResourceRef<T>) -> &T {
         let pool: &ResourcePool<T> = self.get_pool().unwrap();
         pool.get(res_ref)
+    }
+
+    pub fn get_by_key<T: 'static>(&self, key: ResourceKey) -> Option<ResourceRef<T>> {
+        if let Some(pool) = self.get_pool::<T>() {
+            pool.get_by_key(key)
+        } else {
+            None
+        }
     }
 
     pub fn cleanup(&mut self) {

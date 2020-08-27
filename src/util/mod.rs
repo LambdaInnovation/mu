@@ -1,8 +1,9 @@
 use crate::math::*;
 use std::ops::{AddAssign, Mul};
+use serde::{Serialize, Deserialize};
 
 /// Generic RGBA color.
-#[derive(Clone, Copy, Default, Debug)]
+#[derive(Clone, Copy, Default, Debug, Serialize, Deserialize)]
 pub struct Color {
     pub r: f32,
     pub g: f32,

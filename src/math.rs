@@ -7,7 +7,7 @@ use serde::{Serialize, Deserialize};
 /// ! Many structs in cgmath crate is used by Mu::math, so we provide direct access here.
 pub use cgmath;
 pub use cgmath::{
-    SquareMatrix, One
+    SquareMatrix, One, Zero
 };
 
 pub type Float = f32;

@@ -2,49 +2,62 @@ use crate::ecs::{HasParent, Transform};
 use specs::prelude::*;
 use serde_json::Value;
 use crate::asset::*;
+use crate::client::sprite::{SpriteRenderer};
+use crate::resource::ResManager;
+use crate::{WgpuState, WgpuStateCell, Module, InitContext, InsertInfo};
 
-pub struct EntityLoadContext {
-    pub entities: Vec<Entity>
+pub struct EntityLoadContext<'a> {
+    pub entities: Vec<Entity>,
+    pub resource_mgr: &'a mut ResManager,
+    pub wgpu_state: &'a WgpuState
 }
 
 pub trait ComponentS11n {
-    fn load(data: Value, ctx: &EntityLoadContext) -> Self;
+    fn load(data: Value, ctx: &mut EntityLoadContext) -> Self;
 }
 
 
-struct EntityLoadRequest {
-    path: String,
+pub struct EntityLoadRequest {
+    pub path: String,
 }
 
-type EntityLoadRequests = Vec<EntityLoadRequest>;
+pub type EntityLoadRequests = Vec<EntityLoadRequest>;
 
 // 接下来应该是自动生成的代码，暂时用手写模拟效果，先跑通流程
 #[derive(SystemData)]
 struct AllComponentsWrite<'a> {
     pub has_parent_write: WriteStorage<'a, HasParent>,
     pub transform_write:  WriteStorage<'a, Transform>,
+    pub sprite_renderer_write: WriteStorage<'a, SpriteRenderer>
 }
 
 struct DefaultSerializeSystem {
-
+    wgpu_state: WgpuStateCell
 }
 
 impl DefaultSerializeSystem {
 
-    fn write_components<'a>(v: Value, entity: Entity, ctx: &EntityLoadContext, cmpt_write: &mut AllComponentsWrite<'a>) {
+    fn write_components<'a>(v: Value, entity: Entity, ctx: &mut EntityLoadContext, cmpt_write: &mut AllComponentsWrite<'a>) {
         match v {
             Value::Object(mut m) => {
                 match m.remove("Transform") {
                     Some(cmpt_val) => {
-                        let t: Transform = ComponentS11n::load(cmpt_val, &ctx);
+                        let t: Transform = ComponentS11n::load(cmpt_val, ctx);
                         cmpt_write.transform_write.insert(entity, t).expect("Write Transform failed");
                     },
                     _ => ()
                 }
                 match m.remove("HasParent") {
                     Some(cmpt_val) => {
-                        let t: HasParent = ComponentS11n::load(cmpt_val, &ctx);
+                        let t: HasParent = ComponentS11n::load(cmpt_val, ctx);
                         cmpt_write.has_parent_write.insert(entity, t).expect("Write HasParent failed");
+                    },
+                    _ => ()
+                }
+                match m.remove("SpriteRenderer") {
+                    Some(cmpt_val) => {
+                        let t: SpriteRenderer = ComponentS11n::load(cmpt_val, ctx);
+                        cmpt_write.sprite_renderer_write.insert(entity, t).expect("Write SpriteRenderer failed");
                     },
                     _ => ()
                 }
@@ -55,9 +68,9 @@ impl DefaultSerializeSystem {
 }
 
 impl<'a> System<'a> for DefaultSerializeSystem {
-    type SystemData = (AllComponentsWrite<'a>, WriteExpect<'a, EntityLoadRequests>, Entities<'a>);
+    type SystemData = (AllComponentsWrite<'a>, WriteExpect<'a, EntityLoadRequests>, Entities<'a>, WriteExpect<'a, ResManager>);
 
-    fn run(&mut self, (mut cmpt_write, mut requests, entities): Self::SystemData) {
+    fn run(&mut self, (mut cmpt_write, mut requests, entities, mut res_mgr): Self::SystemData) {
         for request in &*requests {
             let mut entity_vec = vec![];
 
@@ -72,13 +85,16 @@ impl<'a> System<'a> for DefaultSerializeSystem {
                 _ => panic!("Invalid root type")
             };
 
-            let ctx = EntityLoadContext {
-                entities: entity_vec
+            let wgpu_state = self.wgpu_state.borrow();
+            let mut ctx = EntityLoadContext {
+                entities: entity_vec,
+                resource_mgr: &mut *res_mgr,
+                wgpu_state: &*wgpu_state
             };
 
             for (idx, ev) in entity_values.into_iter().enumerate() {
                 let entity = ctx.entities[idx].clone();
-                Self::write_components(ev, entity, &ctx, &mut cmpt_write);
+                Self::write_components(ev, entity, &mut ctx, &mut cmpt_write);
             }
         }
         requests.clear();
@@ -89,3 +105,15 @@ impl<'a> System<'a> for DefaultSerializeSystem {
 // AutoGen End
 
 pub struct DefaultSerializeModule;
+
+impl Module for DefaultSerializeModule {
+    fn init(&self, ctx: &mut InitContext) {
+        ctx.init_data.world.insert(EntityLoadRequests::new());
+        ctx.group_thread_local.dispatch(
+            InsertInfo::new(""),
+            |d, i| i.insert_thread_local(DefaultSerializeSystem {
+                wgpu_state: d.wgpu_state.clone()
+            })
+        );
+    }
+}
