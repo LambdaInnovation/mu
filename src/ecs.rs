@@ -111,13 +111,13 @@ impl Parent for HasParent {
 
 #[derive(Serialize, Deserialize)]
 pub struct HasParentS11n {
-    entity_id: u32
+    entity_ix: usize
 }
 
 impl ComponentS11n for HasParent {
     fn load(data: Value, ctx: &EntityLoadContext) -> Self {
         let tmp: HasParentS11n = serde_json::from_value(data).unwrap();
-        let entity = ctx.entity_mapping.get(&tmp.entity_id).unwrap().clone();
+        let entity = ctx.entities[tmp.entity_ix].clone();
         HasParent {
             parent: entity
         }
