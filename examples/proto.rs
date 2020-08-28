@@ -4,7 +4,8 @@ use mu::client::sprite::*;
 use specs::{WorldExt, Builder};
 use mu::ecs::Transform;
 use mu::util::Color;
-use mu::proto::{DefaultSerializeModule, EntityLoadRequest, EntityLoadRequests};
+use mu::proto::{EntityLoadRequest, EntityLoadRequests};
+use mu::proto_default::DefaultSerializeModule;
 
 struct MyModule;
 

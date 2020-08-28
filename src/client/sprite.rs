@@ -14,7 +14,8 @@ use crate::math::*;
 use crate::util::Color;
 use crate::resource::{ResourceRef, ResManager};
 use std::collections::HashMap;
-use crate::proto::{ComponentS11n, EntityLoadContext};
+use crate::proto::{ComponentS11n, ProtoLoadContext};
+use crate::proto_default::DefaultExtras;
 use serde_json::Value;
 
 #[derive(Clone, Deserialize)]
@@ -97,9 +98,9 @@ impl SpriteRef {
         }
     }
 
-    pub fn load(v: Value, ctx: &mut EntityLoadContext) -> Self {
+    pub fn load<T: DefaultExtras>(v: Value, ctx: &mut ProtoLoadContext<T>) -> Self {
         let s11n: SpriteRefS11n = serde_json::from_value(v).unwrap();
-        let sheet = load_sprite_sheet(ctx.resource_mgr, ctx.wgpu_state, &s11n.sheet).unwrap();
+        let sheet = load_sprite_sheet(ctx.resource_mgr, ctx.extras.wgpu_state(), &s11n.sheet).unwrap();
         SpriteRef::new(&sheet, s11n.idx)
     }
 }
@@ -161,8 +162,8 @@ impl Component for SpriteRenderer {
     type Storage = VecStorage<Self>;
 }
 
-impl ComponentS11n for SpriteRenderer {
-    fn load(mut data: Value, ctx: &mut EntityLoadContext) -> Self {
+impl<Extras> ComponentS11n<Extras> for SpriteRenderer where Extras: DefaultExtras {
+    fn load(mut data: Value, ctx: &mut ProtoLoadContext<Extras>) -> Self {
         let color: Color = serde_json::from_value(data["color"].take()).unwrap();
         let sprite_ref = SpriteRef::load(data["sprite"].take(), ctx);
 

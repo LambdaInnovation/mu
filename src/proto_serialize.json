@@ -1,0 +1,13 @@
+{
+  "desc": "Will be replaced to automatic generation",
+  "components": [
+    "ecs::Transform",
+    "ecs::HasParent",
+    "client::sprite::SpriteRenderer"
+  ],
+  "extras": [
+    "ReadExpect<WgpuState>"
+  ],
+  "target_file": "proto_default.rs",
+  "keyword": "Default"
+}

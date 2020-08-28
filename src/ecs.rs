@@ -3,7 +3,7 @@ use specs::prelude::*;
 use crate::math::*;
 use std::time::Instant;
 use specs_hierarchy::Parent;
-use crate::proto::{ComponentS11n, EntityLoadContext};
+use crate::proto::{ComponentS11n, ProtoLoadContext};
 use serde_json::Value;
 use serde::{Serialize, Deserialize};
 
@@ -86,9 +86,9 @@ impl Component for Transform {
 }
 
 // TODO: Can be auto-derived
-impl ComponentS11n for Transform {
+impl<T> ComponentS11n<T> for Transform {
 
-    fn load(data: Value, _ctx: &mut EntityLoadContext) -> Self {
+    fn load(data: Value, _ctx: &mut ProtoLoadContext<T>) -> Self {
         serde_json::from_value(data).unwrap()
     }
 
@@ -124,8 +124,8 @@ pub struct HasParentS11n {
     entity_ix: usize
 }
 
-impl ComponentS11n for HasParent {
-    fn load(data: Value, ctx: &mut EntityLoadContext) -> Self {
+impl<T> ComponentS11n<T> for HasParent {
+    fn load(data: Value, ctx: &mut ProtoLoadContext<T>) -> Self {
         let tmp: HasParentS11n = serde_json::from_value(data).unwrap();
         let entity = ctx.entities[tmp.entity_ix].clone();
         HasParent {
