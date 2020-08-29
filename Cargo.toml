@@ -21,6 +21,7 @@ serde_json = "1.0"
 
 specs = { version = "*", features = ["shred-derive"] }
 specs-hierarchy = "0.6"
+specs-derive = "0.4.1"
 
 cgmath = { version = "*", features = ["serde"] }
 rand = "*"

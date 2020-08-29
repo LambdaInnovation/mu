@@ -14,7 +14,7 @@ use crate::math::*;
 use crate::util::Color;
 use crate::resource::{ResourceRef, ResManager};
 use std::collections::HashMap;
-use crate::proto::{ComponentS11n, ProtoLoadContext};
+use crate::proto::{ComponentS11n, ProtoLoadContext, ProtoStoreContext};
 use crate::proto_default::DefaultExtras;
 use serde_json::Value;
 
@@ -98,10 +98,25 @@ impl SpriteRef {
         }
     }
 
-    pub fn load<T: DefaultExtras>(v: Value, ctx: &mut ProtoLoadContext<T>) -> Self {
+}
+
+impl<Extras: DefaultExtras> ComponentS11n<Extras> for SpriteRef {
+    fn load(v: Value, ctx: &mut ProtoLoadContext<Extras>) -> Self {
         let s11n: SpriteRefS11n = serde_json::from_value(v).unwrap();
         let sheet = load_sprite_sheet(ctx.resource_mgr, ctx.extras.wgpu_state(), &s11n.sheet).unwrap();
         SpriteRef::new(&sheet, s11n.idx)
+    }
+
+    fn store(&self, ctx: &ProtoStoreContext<Extras>) -> Value {
+        let sheet = ctx.resource_mgr.get(&self.sheet);
+        let sheet_path = sheet.path.clone().expect("No SpriteSheet path");
+
+        let s11n = SpriteRefS11n {
+            sheet: sheet_path,
+            idx: self.idx
+        };
+
+        serde_json::to_value(s11n).unwrap()
     }
 }
 
@@ -164,14 +179,21 @@ impl Component for SpriteRenderer {
 
 impl<Extras> ComponentS11n<Extras> for SpriteRenderer where Extras: DefaultExtras {
     fn load(mut data: Value, ctx: &mut ProtoLoadContext<Extras>) -> Self {
-        let color: Color = serde_json::from_value(data["color"].take()).unwrap();
-        let sprite_ref = SpriteRef::load(data["sprite"].take(), ctx);
+        let color: Color = ComponentS11n::load(data["color"].take(), ctx);
+        let sprite_ref = ComponentS11n::load(data["sprite"].take(), ctx);
 
         Self {
             color,
             sprite: sprite_ref,
             material: None
         }
+    }
+
+    fn store(&self, ctx: &ProtoStoreContext<Extras>) -> Value {
+        serde_json::json!({
+            "color": ComponentS11n::store(&self.color, ctx),
+            "sprite": ComponentS11n::store(&self.sprite, ctx)
+        })
     }
 }
 
