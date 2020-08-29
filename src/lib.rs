@@ -78,7 +78,14 @@ pub struct InsertInfo {
     order: i32,
 }
 
+impl Default for InsertInfo {
+    fn default() -> Self {
+        Self::new("")
+    }
+}
+
 impl InsertInfo {
+
     pub fn new(name: &str) -> InsertInfo {
         InsertInfo {
             name: String::from(name),

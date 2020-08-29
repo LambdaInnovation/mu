@@ -6,6 +6,7 @@ use serde_json::*;
 use crate::ecs::Transform;
 use crate::client::sprite::SpriteRenderer;
 use crate::asset::load_asset;
+use futures::task::Poll;
 
 #[derive(SystemData)]
 struct DefaultComponentsWrite<'a> {
@@ -72,7 +73,7 @@ impl<'a> System<'a> for DefaultProtoSystem {
 
     fn run(&mut self, (mut cmpt_write, mut requests, entities, mut res_mgr, extras): Self::SystemData) {
         let mut extras = extras;
-        for request in &*requests {
+        for request in &mut *requests {
             let mut entity_vec = vec![];
 
             let value: Value = serde_json::from_str(&load_asset::<String>(&request.path).unwrap()).unwrap();
@@ -87,9 +88,9 @@ impl<'a> System<'a> for DefaultProtoSystem {
             };
 
             let mut ctx = ProtoLoadContext {
-                entities: entity_vec,
+                entities: &entity_vec,
                 resource_mgr: &mut *res_mgr,
-                extras
+                extras: &mut extras
             };
 
             for (idx, ev) in entity_values.into_iter().enumerate() {
@@ -97,7 +98,7 @@ impl<'a> System<'a> for DefaultProtoSystem {
                 Self::write_components(ev, entity, &mut ctx, &mut cmpt_write);
             }
 
-            extras = ctx.finish();
+            *request.result.lock().unwrap() = Poll::Ready(entity_vec);
         }
         requests.clear();
     }

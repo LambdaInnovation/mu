@@ -1,19 +1,13 @@
 use specs::prelude::*;
 use serde_json::Value;
 use crate::resource::ResManager;
+use std::sync::{Arc, Mutex};
+use std::task::Poll;
 
 pub struct ProtoLoadContext<'a, Extras> {
-    pub entities: Vec<Entity>,
+    pub entities: &'a Vec<Entity>,
     pub resource_mgr: &'a mut ResManager,
-    pub extras: Extras
-}
-
-impl<'a, Extras> ProtoLoadContext<'a, Extras> {
-
-    pub(crate) fn finish(self) -> Extras {
-        self.extras
-    }
-
+    pub extras: &'a mut Extras
 }
 
 pub trait ComponentS11n<Extras> {
@@ -22,6 +16,18 @@ pub trait ComponentS11n<Extras> {
 
 pub struct EntityLoadRequest {
     pub path: String,
+    pub result: Arc<Mutex<Poll< Vec<Entity> >>>
+}
+
+impl EntityLoadRequest {
+
+    pub fn new(path: &str) -> Self {
+        Self {
+            path: path.to_string(),
+            result: Arc::new(Mutex::new(Poll::Pending))
+        }
+    }
+
 }
 
 pub type EntityLoadRequests = Vec<EntityLoadRequest>;
