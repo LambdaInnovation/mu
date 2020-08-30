@@ -14,8 +14,8 @@ pub struct ProtoLoadContext<'a, Extras> {
 
 pub struct ProtoStoreContext<'a, Extras> {
     pub entity_to_index: &'a HashMap<Entity, usize>,
-    pub resource_mgr: &'a mut ResManager,
-    pub extras: &'a mut Extras
+    pub resource_mgr: &'a ResManager,
+    pub extras: &'a Extras,
 }
 
 pub trait ComponentS11n<Extras> {
@@ -33,12 +33,13 @@ impl<T: Serialize + DeserializeOwned + Clone, Extras> ComponentS11n<Extras> for 
     }
 }
 
-pub struct EntityLoadRequest {
+/// A request to load the given entity from path.
+pub struct ProtoLoadRequest {
     pub path: String,
     pub result: Arc<Mutex<Poll< Vec<Entity> >>>
 }
 
-impl EntityLoadRequest {
+impl ProtoLoadRequest {
 
     pub fn new(path: &str) -> Self {
         Self {
@@ -49,5 +50,25 @@ impl EntityLoadRequest {
 
 }
 
-pub type EntityLoadRequests = Vec<EntityLoadRequest>;
+pub type ProtoLoadRequests = Vec<ProtoLoadRequest>;
 
+/// A request to store the given entity in the given asset path.
+pub struct ProtoStoreRequest {
+    pub entity_vec: Vec<Entity>,
+    pub path: String,
+    pub result: Arc<Mutex<Poll<std::io::Result<()>>>>
+}
+
+impl ProtoStoreRequest {
+
+    pub fn new(path: &str) -> Self {
+        Self {
+            entity_vec: vec![],
+            path: path.to_string(),
+            result: Arc::new(Mutex::new(Poll::Pending))
+        }
+    }
+
+}
+
+pub type ProtoStoreRequests = Vec<ProtoStoreRequest>;

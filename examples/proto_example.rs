@@ -5,7 +5,7 @@ use mu::client::sprite::*;
 use specs::prelude::*;
 use mu::ecs::Transform;
 use mu::util::Color;
-use mu::proto::{EntityLoadRequest, EntityLoadRequests};
+use mu::proto::{ProtoLoadRequest, ProtoLoadRequests};
 use mu::proto_default::DefaultSerializeModule;
 use std::task::Poll;
 use std::sync::{Mutex, Arc};
@@ -48,10 +48,10 @@ impl Module for MyModule {
     }
 
     fn start(&self, start_data: &mut StartContext) {
-        let req = EntityLoadRequest::new("proto/test_proto.json");
+        let req = ProtoLoadRequest::new("proto/test_proto.json");
         let result = req.result.clone();
 
-        start_data.world.write_resource::<EntityLoadRequests>()
+        start_data.world.write_resource::<ProtoLoadRequests>()
             .push(req);
 
         start_data.world.insert(ListenEntityCreateData {
