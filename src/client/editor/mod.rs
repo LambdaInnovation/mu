@@ -10,6 +10,8 @@ use std::rc::Rc;
 use winit::window::Window;
 use imgui_wgpu::Renderer;
 
+mod asset_editor;
+
 pub const DEP_IMGUI_SETUP: &str = "editor_setup";
 pub const DEP_IMGUI_TEARDOWN: &str = "editor_teardown";
 
@@ -122,7 +124,9 @@ impl<'a> System<'a> for EditorUITeardownSystem {
     }
 }
 
-pub struct EditorModule;
+pub struct EditorModule {
+    pub asset_path: Option<String>, // Path to /asset folder of a project. If not set, editor-only features will be disabled.
+}
 
 impl Module for EditorModule {
     fn init(&self, init_ctx: &mut InitContext) {
@@ -159,6 +163,16 @@ impl Module for EditorModule {
             init_ctx.group_thread_local.dispatch(
                 insert_info,
                 |_, f| f.insert_thread_local(sys));
+        }
+
+        if let Some(asset_path) = &self.asset_path {
+            init_ctx.init_data.world.insert(asset_editor::AssetEditorInfo {
+                base_path: asset_path.clone()
+            });
+            init_ctx.group_thread_local.dispatch(
+                InsertInfo::default().after(&[DEP_IMGUI_SETUP]).before(&[DEP_IMGUI_TEARDOWN]),
+                |_, i| i.insert_thread_local(asset_editor::AssetEditorSystem {})
+            );
         }
     }
 }

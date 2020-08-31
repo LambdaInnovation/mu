@@ -82,7 +82,7 @@ fn main() {
         .add_game_module(SpriteModule)
         .add_game_module(MyModule)
         .add_game_module(DefaultSerializeModule)
-        .add_game_module(EditorModule)
+        .add_game_module(EditorModule { asset_path: None })
         .build();
 
     runtime.start();
