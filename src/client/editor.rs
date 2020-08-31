@@ -10,8 +10,8 @@ use std::rc::Rc;
 use winit::window::Window;
 use imgui_wgpu::Renderer;
 
-pub const DEP_SETUP: &str = "editor_setup";
-pub const DEP_TEARDOWN: &str = "editor_teardown";
+pub const DEP_IMGUI_SETUP: &str = "editor_setup";
+pub const DEP_IMGUI_TEARDOWN: &str = "editor_teardown";
 
 static mut FRAME: Option<Ui> = None;
 
@@ -143,7 +143,7 @@ impl Module for EditorModule {
         ctx.io_mut().font_global_scale = (1.0 / hidpi_factor) as f32;
 
         {
-            let insert_info = InsertInfo::new(DEP_TEARDOWN).after(&[DEP_SETUP]);
+            let insert_info = InsertInfo::new(DEP_IMGUI_TEARDOWN).after(&[DEP_IMGUI_SETUP]);
             let sys = EditorUITeardownSystem::new(&mut ctx,
                                                   &*init_ctx.init_data.world.read_resource());
             init_ctx.group_thread_local.dispatch(
@@ -153,7 +153,7 @@ impl Module for EditorModule {
         }
 
         {
-            let insert_info = InsertInfo::new(DEP_SETUP)
+            let insert_info = InsertInfo::new(DEP_IMGUI_SETUP)
                 .after(&[graphics::DEP_CAM_DRAW_TEARDOWN]);
             let sys = EditorUISetupSystem::new(ctx, init_ctx.init_data.window.clone());
             init_ctx.group_thread_local.dispatch(

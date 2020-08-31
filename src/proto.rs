@@ -61,9 +61,9 @@ pub struct ProtoStoreRequest {
 
 impl ProtoStoreRequest {
 
-    pub fn new(path: &str) -> Self {
+    pub fn new(entities: &Vec<Entity>, path: &str) -> Self {
         Self {
-            entity_vec: vec![],
+            entity_vec: entities.clone(),
             path: path.to_string(),
             result: Arc::new(Mutex::new(Poll::Pending))
         }

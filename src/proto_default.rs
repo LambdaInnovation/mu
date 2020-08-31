@@ -190,6 +190,7 @@ pub struct DefaultSerializeModule;
 impl Module for DefaultSerializeModule {
     fn init(&self, ctx: &mut InitContext) {
         ctx.init_data.world.insert(ProtoLoadRequests::new());
+        ctx.init_data.world.insert(ProtoStoreRequests::new());
         ctx.group_normal.dispatch(
             InsertInfo::default(),
             |_, i| i.insert(DefaultProtoLoadSystem)
