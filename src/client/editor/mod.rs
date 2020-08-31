@@ -166,9 +166,7 @@ impl Module for EditorModule {
         }
 
         if let Some(asset_path) = &self.asset_path {
-            init_ctx.init_data.world.insert(asset_editor::AssetEditorInfo {
-                base_path: asset_path.clone()
-            });
+            init_ctx.init_data.world.insert(asset_editor::AssetEditorInfo::new(&asset_path));
             init_ctx.group_thread_local.dispatch(
                 InsertInfo::default().after(&[DEP_IMGUI_SETUP]).before(&[DEP_IMGUI_TEARDOWN]),
                 |_, i| i.insert_thread_local(asset_editor::AssetEditorSystem {})
