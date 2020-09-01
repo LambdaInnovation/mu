@@ -9,8 +9,10 @@ use std::time::Instant;
 use std::rc::Rc;
 use winit::window::Window;
 use imgui_wgpu::Renderer;
+use crate::client::editor::inspector::InspectorRuntimeData;
 
 mod asset_editor;
+mod inspector;
 
 pub const DEP_IMGUI_SETUP: &str = "editor_setup";
 pub const DEP_IMGUI_TEARDOWN: &str = "editor_teardown";
@@ -172,5 +174,11 @@ impl Module for EditorModule {
                 |_, i| i.insert_thread_local(asset_editor::AssetEditorSystem {})
             );
         }
+
+        init_ctx.init_data.world.insert(InspectorRuntimeData::new());
+        init_ctx.group_thread_local.dispatch(
+            InsertInfo::default().before(&[DEP_IMGUI_TEARDOWN]).after(&[DEP_IMGUI_SETUP]),
+            |_, i| i.insert_thread_local(inspector::InspectorSystem)
+        );
     }
 }
