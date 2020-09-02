@@ -8,6 +8,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::ffi::OsStr;
+use crate::util::Color;
 
 #[derive(Copy, Clone)]
 enum DirEntryType {
@@ -17,6 +18,7 @@ enum DirEntryType {
 #[derive(Clone)]
 struct CachedDirEntry {
     path: PathBuf,
+    relative_path: PathBuf,
     path_hash: u64,
     filename: ImString,
     ty: DirEntryType
@@ -66,10 +68,12 @@ fn _walk_path(ctx: &mut AssetEditorPathRecurseContext, ui: &Ui, path: &PathBuf) 
                         entry.path().hash(&mut hasher);
                         hasher.finish()
                     };
+                    let relative_path = PathBuf::from(entry.path().strip_prefix(&ctx.editor_info.base_path).unwrap());
                     CachedDirEntry {
                         path: entry.path(),
                         path_hash: hash,
                         filename: ImString::new(entry.file_name().to_str().unwrap()),
+                        relative_path,
                         ty
                     }
                 })
@@ -94,7 +98,7 @@ fn _walk_path(ctx: &mut AssetEditorPathRecurseContext, ui: &Ui, path: &PathBuf) 
                         if ui.is_item_clicked(MouseButton::Left) {
                             ctx.editor_info.selected = e.path_hash;
                             ctx.inspector_info_write.current =
-                                Some(ctx.inspector_info_write.create_inspector(e.path.clone()));
+                                Some(ctx.inspector_info_write.create_inspector(e.relative_path.clone()));
                         }
                     });
             },
@@ -200,8 +204,10 @@ impl AssetInspectorResources {
 pub(crate) struct InspectorSystem;
 
 fn _show_inspector(ui: &Ui, item: &mut AssetInspectEntry) -> bool {
-    Window::new(im_str!("Inspector"))
+    Window::new(im_str!("Asset Inspector"))
         .build(ui, || {
+            let title = item.path.to_str().unwrap();
+            ui.text_colored(Color::mono(0.8).into(), title);
             item.inspector.display(ui);
         });
 
