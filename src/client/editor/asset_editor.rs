@@ -7,7 +7,7 @@ use std::fs::DirEntry;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
-use crate::client::editor::inspector::{InspectorRuntimeData, InspectEntry};
+use std::ffi::OsStr;
 
 #[derive(Copy, Clone)]
 enum DirEntryType {
@@ -22,18 +22,13 @@ struct CachedDirEntry {
     ty: DirEntryType
 }
 
-struct AssetGuiContext<'a> {
-    editor_info: &'a mut AssetEditorInfo,
-    inspector_info_write: &'a mut InspectorRuntimeData
-}
-
-pub(crate) struct AssetEditorInfo {
+pub(crate) struct AssetEditorResource {
     pub base_path: PathBuf,
     selected: u64,
     fs_path_cache: HashMap<PathBuf, Vec<CachedDirEntry>>
 }
 
-impl AssetEditorInfo {
+impl AssetEditorResource {
 
     pub fn new(path: &str) -> Self {
         Self {
@@ -48,7 +43,12 @@ impl AssetEditorInfo {
 pub(crate) struct AssetEditorSystem {
 }
 
-fn _walk_path(ctx: &mut AssetGuiContext, ui: &Ui, path: &PathBuf) {
+struct AssetEditorPathRecurseContext<'a> {
+    editor_info: &'a mut AssetEditorResource,
+    inspector_info_write: &'a mut AssetInspectorResources
+}
+
+fn _walk_path(ctx: &mut AssetEditorPathRecurseContext, ui: &Ui, path: &PathBuf) {
     if !ctx.editor_info.fs_path_cache.contains_key(path) {
         let v = fs::read_dir(path)
             .map(|read_dir| read_dir
@@ -93,7 +93,8 @@ fn _walk_path(ctx: &mut AssetGuiContext, ui: &Ui, path: &PathBuf) {
                     .build(&ui, || {
                         if ui.is_item_clicked(MouseButton::Left) {
                             ctx.editor_info.selected = e.path_hash;
-                            ctx.inspector_info_write.current = Some(InspectEntry::Asset(e.path))
+                            ctx.inspector_info_write.current =
+                                Some(ctx.inspector_info_write.create_inspector(e.path.clone()));
                         }
                     });
             },
@@ -113,18 +114,108 @@ fn _walk_path(ctx: &mut AssetGuiContext, ui: &Ui, path: &PathBuf) {
 }
 
 impl<'a> System<'a> for AssetEditorSystem {
-    type SystemData = (WriteExpect<'a, AssetEditorInfo>, WriteExpect<'a, InspectorRuntimeData>);
+    type SystemData = (WriteExpect<'a, AssetEditorResource>, WriteExpect<'a, AssetInspectorResources>);
 
     fn run(&mut self, (mut info, mut inspector_data): Self::SystemData) {
         with_frame(|ui| {
             Window::new(im_str!("Assets")).build(ui, || {
                 let base_path = info.base_path.clone();
-                let mut ctx = AssetGuiContext {
+                let mut ctx = AssetEditorPathRecurseContext {
                     editor_info: &mut *info,
                     inspector_info_write: &mut *inspector_data
                 };
                 _walk_path(&mut ctx, ui, &base_path);
             });
+        });
+    }
+}
+
+pub trait AssetInspectorFactory : Send + Sync {
+    fn create(&self, path: PathBuf) -> Box<dyn AssetInspector>;
+}
+
+pub struct AssetInspectEntry {
+    path: PathBuf,
+    inspector: Box<dyn AssetInspector>
+}
+
+pub trait AssetInspector : Send + Sync {
+
+    fn display(&mut self, ui: &Ui);
+
+}
+
+struct DefaultInspector {
+}
+
+impl AssetInspector for DefaultInspector {
+    fn display(&mut self, ui: &Ui) {
+        ui.text("Unsupported format");
+    }
+}
+
+pub struct InspectorFactoryEntry {
+    extension: String,
+    factory: Box<dyn AssetInspectorFactory>
+}
+
+pub struct AssetInspectorResources {
+    pub handlers: Vec<InspectorFactoryEntry>,
+    pub current: Option<AssetInspectEntry>,
+    pub pinned: Vec<AssetInspectEntry>
+}
+
+impl AssetInspectorResources {
+
+    pub fn create_inspector(&self, path: PathBuf) -> AssetInspectEntry {
+        for handler in &self.handlers {
+            if path.ends_with(&handler.extension) {
+                return AssetInspectEntry {
+                    path: path.clone(),
+                    inspector: handler.factory.create(path)
+                }
+            }
+        }
+
+        AssetInspectEntry {
+            path,
+            inspector: Box::new(DefaultInspector {})
+        }
+    }
+
+}
+
+impl AssetInspectorResources {
+
+    pub fn new() -> Self {
+        Self {
+            handlers: vec![],
+            current: None,
+            pinned: vec![]
+        }
+    }
+
+}
+
+pub(crate) struct InspectorSystem;
+
+fn _show_inspector(ui: &Ui, item: &mut AssetInspectEntry) -> bool {
+    Window::new(im_str!("Inspector"))
+        .build(ui, || {
+            item.inspector.display(ui);
+        });
+
+    true
+}
+
+impl<'a> System<'a> for InspectorSystem {
+    type SystemData = (WriteExpect<'a, AssetInspectorResources>);
+
+    fn run(&mut self, mut data: Self::SystemData) {
+        super::with_frame(|ui| {
+            if let Some(current) = &mut data.current {
+                _show_inspector(ui, current);
+            }
         });
     }
 }
