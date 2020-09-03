@@ -9,6 +9,7 @@ use std::time::Instant;
 use std::rc::Rc;
 use winit::window::Window;
 use imgui_wgpu::Renderer;
+use std::collections::HashSet;
 
 mod asset_editor;
 
@@ -28,6 +29,39 @@ pub fn with_frame<F>(f: F)
             _ => (),
         }
     }
+}
+
+pub struct ToggleViewEntry {
+    pub id: String,
+    pub display_name: String,
+}
+
+pub(crate) struct EditorUIResources {
+    pub show_ui: bool,
+    pub demo_window_opened: bool,
+    pub all_toggle_views: Vec<ToggleViewEntry>,
+    // TODO: Serialize settings
+    pub all_opened_views: HashSet<String>,
+}
+
+impl EditorUIResources {
+
+    pub fn new() -> Self {
+        Self {
+            show_ui: true,
+            demo_window_opened: false,
+            all_opened_views: HashSet::new(),
+            all_toggle_views: vec![],
+        }
+    }
+
+    pub fn push_view_toggle(&mut self, id: &str, display_name: &str) {
+        self.all_toggle_views.push(ToggleViewEntry {
+            id: id.to_string(),
+            display_name: display_name.to_string()
+        });
+    }
+
 }
 
 struct EditorUISetupSystem {
@@ -52,10 +86,15 @@ impl EditorUISetupSystem {
 }
 
 impl<'a> System<'a> for EditorUISetupSystem {
-    type SystemData = ReadExpect<'a, WindowInfo>;
+    type SystemData = (ReadExpect<'a, WindowInfo>, WriteExpect<'a, EditorUIResources>);
 
-    fn run(&mut self, data: Self::SystemData) {
+    fn run(&mut self, (data, mut ui_res_write): Self::SystemData) {
+        let ui_res = &mut *ui_res_write;
         let data = &data;
+
+        if !ui_res.show_ui {
+            return
+        }
 
         for evt in &data.frame_event_list {
             self.platform.handle_event(
@@ -76,9 +115,28 @@ impl<'a> System<'a> for EditorUISetupSystem {
         self.last_frame = Some(self.imgui.io_mut().update_delta_time(last_frame));
 
         let ui = self.imgui.frame();
+        ui.main_menu_bar(|| {
+            ui.menu(im_str!("View"), true, || {
+                // let (all_toggle_views, all_opened_views) = ui_res.borrow_view_states();
+                for view_entry in &ui_res.all_toggle_views {
+                    let last_enabled = ui_res.all_opened_views.contains(&view_entry.id);
+                    if MenuItem::new(&im_str!("{}", view_entry.display_name))
+                        .selected(last_enabled)
+                        .build(&ui) {
+                        let enabled = !last_enabled;
+                        if enabled {
+                            ui_res.all_opened_views.insert(view_entry.id.clone());
+                        } else {
+                            ui_res.all_opened_views.remove(&view_entry.id);
+                        }
+                    }
+                }
+            });
+        });
 
-        let mut enable = false;
-        ui.show_demo_window(&mut enable);
+        if ui_res.all_opened_views.contains(DEMO_WINDOW_TOGGLE) {
+            ui.show_demo_window(&mut ui_res.demo_window_opened);
+        }
 
         self.platform.prepare_render(&ui, &*self.window);
 
@@ -131,7 +189,6 @@ pub struct EditorModule {
 impl Module for EditorModule {
     fn init(&self, init_ctx: &mut InitContext) {
         let mut ctx = imgui::Context::create();
-        ctx.set_ini_filename(None);
         let hidpi_factor = init_ctx.init_data.window.scale_factor();
         let font_size = (13.0 * hidpi_factor) as f32;
 
@@ -145,6 +202,12 @@ impl Module for EditorModule {
         ]);
 
         ctx.io_mut().font_global_scale = (1.0 / hidpi_factor) as f32;
+
+        let mut ui_res = EditorUIResources::new();
+        ui_res.push_view_toggle(DEMO_WINDOW_TOGGLE, "IMGUI Demo");
+        ui_res.push_view_toggle(asset_editor::VIEW_TOGGLE_ID, "Assets");
+        ui_res.all_opened_views.insert(asset_editor::VIEW_TOGGLE_ID.to_string());
+        init_ctx.init_data.world.insert(ui_res);
 
         {
             let insert_info = InsertInfo::new(DEP_IMGUI_TEARDOWN).after(&[DEP_IMGUI_SETUP]);
@@ -180,3 +243,5 @@ impl Module for EditorModule {
         );
     }
 }
+
+const DEMO_WINDOW_TOGGLE: &str = "imgui_demo";

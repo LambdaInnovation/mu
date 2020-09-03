@@ -3,12 +3,11 @@ use super::{with_frame, DEP_IMGUI_TEARDOWN, DEP_IMGUI_SETUP};
 use specs::prelude::*;
 use std::collections::HashMap;
 use std::fs;
-use std::fs::DirEntry;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
-use std::ffi::OsStr;
 use crate::util::Color;
+use crate::client::editor::EditorUIResources;
 
 #[derive(Copy, Clone)]
 enum DirEntryType {
@@ -118,9 +117,15 @@ fn _walk_path(ctx: &mut AssetEditorPathRecurseContext, ui: &Ui, path: &PathBuf) 
 }
 
 impl<'a> System<'a> for AssetEditorSystem {
-    type SystemData = (WriteExpect<'a, AssetEditorResource>, WriteExpect<'a, AssetInspectorResources>);
+    type SystemData = (ReadExpect<'a, EditorUIResources>,
+                       WriteExpect<'a, AssetEditorResource>,
+                       WriteExpect<'a, AssetInspectorResources>);
 
-    fn run(&mut self, (mut info, mut inspector_data): Self::SystemData) {
+    fn run(&mut self, (editor_res, mut info, mut inspector_data): Self::SystemData) {
+        if !editor_res.all_opened_views.contains(VIEW_TOGGLE_ID) {
+            return
+        }
+
         with_frame(|ui| {
             Window::new(im_str!("Assets")).build(ui, || {
                 let base_path = info.base_path.clone();
@@ -140,7 +145,8 @@ pub trait AssetInspectorFactory : Send + Sync {
 
 pub struct AssetInspectEntry {
     path: PathBuf,
-    inspector: Box<dyn AssetInspector>
+    inspector: Box<dyn AssetInspector>,
+    just_opened: bool,
 }
 
 pub trait AssetInspector : Send + Sync {
@@ -176,14 +182,16 @@ impl AssetInspectorResources {
             if path.ends_with(&handler.extension) {
                 return AssetInspectEntry {
                     path: path.clone(),
-                    inspector: handler.factory.create(path)
+                    inspector: handler.factory.create(path),
+                    just_opened: true
                 }
             }
         }
 
         AssetInspectEntry {
             path,
-            inspector: Box::new(DefaultInspector {})
+            inspector: Box::new(DefaultInspector {}),
+            just_opened: true
         }
     }
 
@@ -203,21 +211,31 @@ impl AssetInspectorResources {
 
 pub(crate) struct InspectorSystem;
 
-fn _show_inspector(ui: &Ui, item: &mut AssetInspectEntry) -> bool {
-    Window::new(im_str!("Asset Inspector"))
+fn _show_inspector(ui: &Ui, item: &mut AssetInspectEntry) {
+    let mut window =
+        Window::new(im_str!("Asset Inspector"))
+            .size([300., 400.], Condition::FirstUseEver);
+
+    if item.just_opened {
+        item.just_opened = false;
+        window = window.focused(true);
+    }
+
+    window
         .build(ui, || {
             let title = item.path.to_str().unwrap();
             ui.text_colored(Color::mono(0.8).into(), title);
             item.inspector.display(ui);
         });
-
-    true
 }
 
 impl<'a> System<'a> for InspectorSystem {
-    type SystemData = (WriteExpect<'a, AssetInspectorResources>);
+    type SystemData = (ReadExpect<'a, EditorUIResources>, WriteExpect<'a, AssetInspectorResources>);
 
-    fn run(&mut self, mut data: Self::SystemData) {
+    fn run(&mut self, (editor_res, mut data): Self::SystemData) {
+        if !editor_res.all_opened_views.contains(VIEW_TOGGLE_ID) {
+            return
+        }
         super::with_frame(|ui| {
             if let Some(current) = &mut data.current {
                 _show_inspector(ui, current);
@@ -225,3 +243,5 @@ impl<'a> System<'a> for InspectorSystem {
         });
     }
 }
+
+pub const VIEW_TOGGLE_ID: &str = "asset_editor";
