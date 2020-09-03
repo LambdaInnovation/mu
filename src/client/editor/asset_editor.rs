@@ -235,7 +235,7 @@ pub struct InspectorFactoryEntry {
 pub struct AssetInspectorResources {
     handlers: Vec<InspectorFactoryEntry>,
     current: Option<AssetInspectEntry>,
-    pinned: Vec<AssetInspectEntry>
+    // pinned: Vec<AssetInspectEntry>
 }
 
 impl AssetInspectorResources {
@@ -273,7 +273,7 @@ impl AssetInspectorResources {
         Self {
             handlers: vec![],
             current: None,
-            pinned: vec![]
+            // pinned: vec![]
         }
     }
 

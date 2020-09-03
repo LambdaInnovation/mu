@@ -4,10 +4,8 @@ use imgui::*;
 use serde::export::PhantomData;
 
 pub struct VecDefaultInspect<T, U = T> where U: InspectRenderDefault<T> {
-    marker: PhantomData<U>,
-    marker2: PhantomData<T>
+    marker: PhantomData<(T, U)>,
 }
-
 
 impl<T, TInspect> InspectRenderDefault<Vec<T>> for VecDefaultInspect<T, TInspect> where TInspect: InspectRenderDefault<T> {
     fn render(data: &[&Vec<T>], label: &'static str, ui: &Ui, args: &InspectArgsDefault) {

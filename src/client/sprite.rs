@@ -19,7 +19,6 @@ use crate::proto_default::DefaultExtras;
 use serde_json::Value;
 use imgui_inspect_derive::Inspect;
 use super::editor::inspect::*;
-use crate::client::editor::EditorUIResources;
 use crate::client::editor::asset_editor::{AssetInspectorResources, SerializeConfigInspectorFactory};
 
 #[derive(Serialize, Clone, Deserialize, Inspect)]

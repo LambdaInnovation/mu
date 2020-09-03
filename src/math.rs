@@ -2,7 +2,6 @@
 
 use std::f32::consts;
 use std::ops::{Div, Mul, Sub, Add};
-use serde::{Serialize, Deserialize};
 
 /// ! Many structs in cgmath crate is used by Mu::math, so we provide direct access here.
 pub use cgmath;
