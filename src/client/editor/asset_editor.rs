@@ -1,5 +1,5 @@
 use imgui::*;
-use super::{with_frame, DEP_IMGUI_TEARDOWN, DEP_IMGUI_SETUP};
+use super::{with_frame};
 use specs::prelude::*;
 use std::collections::HashMap;
 use std::fs;
@@ -8,6 +8,11 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use crate::util::Color;
 use crate::client::editor::EditorUIResources;
+use imgui_inspect::*;
+use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
+use std::marker::PhantomData;
+use crate::asset::load_asset;
 
 #[derive(Copy, Clone)]
 enum DirEntryType {
@@ -164,22 +169,87 @@ impl AssetInspector for DefaultInspector {
     }
 }
 
+struct SerializeConfigInspector<T, TInspect>
+    where T: Send + Sync + Serialize + DeserializeOwned,
+          TInspect: InspectRenderDefault<T> {
+    repr: T,
+    path: PathBuf,
+    marker: PhantomData<TInspect>
+}
+
+impl<T, TInspect> SerializeConfigInspector<T, TInspect>
+    where T: Send + Sync + Serialize + DeserializeOwned,
+    TInspect: InspectRenderDefault<T> {
+
+    pub fn load(path: PathBuf) -> Self {
+        let rpath = path.to_str().unwrap().to_string();
+        let repr: T = serde_json::from_str(&load_asset::<String>(&rpath).unwrap()).unwrap();
+
+        Self {
+            path, repr,
+            marker: PhantomData
+        }
+    }
+
+}
+
+impl<T, TInspect> AssetInspector for SerializeConfigInspector<T, TInspect>
+    where T: Send + Sync + Serialize + DeserializeOwned,
+    TInspect: InspectRenderDefault<T> + Send + Sync {
+    fn display(&mut self, ui: &Ui) {
+        TInspect::render_mut(&mut [&mut self.repr], "test", ui, &InspectArgsDefault::default());
+    }
+}
+
+pub struct SerializeConfigInspectorFactory<T, TInspect = T>
+    where T: Send + Sync + Serialize + DeserializeOwned,
+          TInspect: Send + Sync + InspectRenderDefault<T> {
+    marker: PhantomData<T>,
+    marker2: PhantomData<TInspect>
+}
+
+impl<T, TInspect> SerializeConfigInspectorFactory<T, TInspect>
+    where T: Send + Sync + Serialize + DeserializeOwned,
+          TInspect: InspectRenderDefault<T> + Send + Sync {
+    pub fn new() -> Self {
+        Self {
+            marker: PhantomData,
+            marker2: PhantomData
+        }
+    }
+}
+
+impl<T, TInspect> AssetInspectorFactory for SerializeConfigInspectorFactory<T, TInspect>
+    where T: 'static + Send + Sync + Serialize + DeserializeOwned,
+          TInspect: 'static + InspectRenderDefault<T> + Send + Sync {
+    fn create(&self, path: PathBuf) -> Box<dyn AssetInspector> {
+        Box::new(SerializeConfigInspector::<T, TInspect>::load(path))
+    }
+}
+
 pub struct InspectorFactoryEntry {
     extension: String,
     factory: Box<dyn AssetInspectorFactory>
 }
 
 pub struct AssetInspectorResources {
-    pub handlers: Vec<InspectorFactoryEntry>,
-    pub current: Option<AssetInspectEntry>,
-    pub pinned: Vec<AssetInspectEntry>
+    handlers: Vec<InspectorFactoryEntry>,
+    current: Option<AssetInspectEntry>,
+    pinned: Vec<AssetInspectEntry>
 }
 
 impl AssetInspectorResources {
 
-    pub fn create_inspector(&self, path: PathBuf) -> AssetInspectEntry {
+    pub fn add_factory<T: AssetInspectorFactory + 'static>(&mut self, ext: &str, factory: T) {
+        self.handlers.push(InspectorFactoryEntry {
+            extension: ext.to_string(),
+            factory: Box::new(factory)
+        })
+    }
+
+    fn create_inspector(&self, path: PathBuf) -> AssetInspectEntry {
         for handler in &self.handlers {
-            if path.ends_with(&handler.extension) {
+            if path.file_name().unwrap().to_str().unwrap().ends_with(&handler.extension) {
                 return AssetInspectEntry {
                     path: path.clone(),
                     inspector: handler.factory.create(path),

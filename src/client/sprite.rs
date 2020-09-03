@@ -17,25 +17,30 @@ use std::collections::HashMap;
 use crate::proto::{ComponentS11n, ProtoLoadContext, ProtoStoreContext};
 use crate::proto_default::DefaultExtras;
 use serde_json::Value;
+use imgui_inspect_derive::Inspect;
+use super::editor::inspect::*;
+use crate::client::editor::EditorUIResources;
+use crate::client::editor::asset_editor::{AssetInspectorResources, SerializeConfigInspectorFactory};
 
-#[derive(Clone, Deserialize)]
+#[derive(Serialize, Clone, Deserialize, Inspect)]
 pub struct SpriteConfig {
     name: String,
-    // https://serde.rs/remote-derive.html
-    #[serde(with = "Vec2SerdeRef")]
+    #[inspect(proxy_type="Vec2DefaultInspect")]
     pos: Vec2,  // Center of the sprite, in pixel coordinates
-    #[serde(with = "Vec2SerdeRef")]
+    #[inspect(proxy_type="Vec2DefaultInspect")]
     size: Vec2, // Size of the image, in pixel coordinates
-    #[serde(with = "Vec2SerdeRef")]
+    #[inspect(proxy_type="Vec2DefaultInspect")]
     pivot: Vec2, // the pos of the pivot within the sprite (normalized 0-1 range)
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize, Inspect)]
 pub struct SpriteSheetConfig {
     texture: String,
+    #[inspect(proxy_type="VecDefaultInspect<SpriteConfig>")]
     sprites: Vec<SpriteConfig>,
     ppu: u32,
     #[serde(skip)]
+    #[inspect(skip)]
     _path: String,
 }
 
@@ -208,6 +213,11 @@ impl Module for SpriteModule {
                 .order(graphics::render_order::OPAQUE),
             move |d, i| i.insert_thread_local(SpriteRenderSystem::new(&mut d.res_mgr, &d.world))
         );
+    }
+
+    fn start(&self, ctx: &mut StartContext) {
+        let mut asset_editor_res = ctx.world.write_resource::<AssetInspectorResources>();
+        asset_editor_res.add_factory(&".sheet.json", SerializeConfigInspectorFactory::<SpriteSheetConfig>::new())
     }
 }
 

@@ -11,7 +11,8 @@ use winit::window::Window;
 use imgui_wgpu::Renderer;
 use std::collections::HashSet;
 
-mod asset_editor;
+pub mod inspect;
+pub mod asset_editor;
 
 pub const DEP_IMGUI_SETUP: &str = "editor_setup";
 pub const DEP_IMGUI_TEARDOWN: &str = "editor_teardown";

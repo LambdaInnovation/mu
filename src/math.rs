@@ -31,13 +31,6 @@ pub const PI: f32 = consts::PI;
 pub const DEG_2_RAD: f32 = PI / 180.0;
 pub const RAD_2_DEG: f32 = 180.0 / PI;
 
-#[derive(Serialize, Deserialize)]
-#[serde(remote = "Vec2")]
-pub struct Vec2SerdeRef {
-    x: Float,
-    y: Float
-}
-
 /// Linearly interpolates between a and b with parameter t.
 #[inline]
 pub fn lerp<T>(a: T, b: T, t: T) -> T
