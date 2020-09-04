@@ -330,6 +330,7 @@ impl InspectRenderDefault<FilterMode> for FilterMode {
     }
 
     fn render_mut(data_arr: &mut [&mut FilterMode], label: &'static str, ui: &Ui, args: &InspectArgsDefault) -> bool {
+        false
     }
 }
 
