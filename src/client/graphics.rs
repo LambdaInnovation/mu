@@ -23,6 +23,9 @@ use imgui_inspect::{InspectRenderDefault, InspectArgsDefault};
 use imgui::*;
 use std::borrow::Cow;
 use crate::client::editor::asset_editor::{AssetInspectorResources, SerializeConfigInspectorFactory};
+use strum::*;
+use strum_macros::*;
+use std::iter::Filter;
 
 pub const DEP_CAM_DRAW_SETUP: &str = "cam_draw_setup";
 pub const DEP_CAM_DRAW_TEARDOWN: &str = "cam_draw_teardown";
@@ -314,6 +317,7 @@ pub fn load_shader_by_content(device: &wgpu::Device, vertex: &str, fragment: &st
 }
 
 #[derive(Serialize, Deserialize)]
+#[derive(EnumVariantNames)]
 pub enum FilterMode {
     Nearest,
     Bilinear,
@@ -325,9 +329,7 @@ impl InspectRenderDefault<FilterMode> for FilterMode {
         unimplemented!()
     }
 
-    fn render_mut(data: &mut [&mut FilterMode], label: &'static str, ui: &Ui, args: &InspectArgsDefault) -> bool {
-        // ui.
-        true
+    fn render_mut(data_arr: &mut [&mut FilterMode], label: &'static str, ui: &Ui, args: &InspectArgsDefault) -> bool {
     }
 }
 
@@ -340,17 +342,17 @@ impl InspectRenderDefault<wgpu::AddressMode> for WgpuAddressModeInspect {
 
     fn render_mut(data: &mut [&mut wgpu::AddressMode], label: &'static str, ui: &Ui, args: &InspectArgsDefault) -> bool {
         let mut idx = *data[0] as usize;
+        let items = [
+            im_str!("MirrorRepeat"),
+            im_str!("Repeat"),
+            im_str!("ClampToEdge"),
+        ];
         ComboBox::new(&im_str!("{}", label))
-            .build_simple(ui,
+            .build_simple_string(ui,
                           &mut idx,
-                          &[wgpu::AddressMode::ClampToEdge, wgpu::AddressMode::Repeat, wgpu::AddressMode::MirrorRepeat], &|x| {
-                    let s = match x {
-                        wgpu::AddressMode::MirrorRepeat => "MirrorRepeat",
-                        wgpu::AddressMode::Repeat => "Repeat",
-                        wgpu::AddressMode::ClampToEdge => "ClampToEdge"
-                    };
-                    Cow::from(im_str!("{}", s))
-                });
+                        &items);
+
+        // *data[0] = idx as wgpu::AddressMode;
         // ui.
         true
     }

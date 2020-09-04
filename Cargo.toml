@@ -27,6 +27,8 @@ cgmath = { version = "*", features = ["serde"] }
 rand = "*"
 image = "*"
 futures = "*"
+strum = "0.19"
+strum_macros = "0.19"
 
 # Client only
 winit = "0.22"
