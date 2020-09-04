@@ -32,7 +32,18 @@ pub struct SpriteConfig {
     pivot: Vec2, // the pos of the pivot within the sprite (normalized 0-1 range)
 }
 
-#[derive(Serialize, Deserialize, Inspect)]
+impl Default for SpriteConfig {
+    fn default() -> Self {
+        Self {
+            name: Default::default(),
+            pos: Vec2::zero(),
+            size: Vec2::zero(),
+            pivot: Vec2::zero(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Default, Inspect)]
 pub struct SpriteSheetConfig {
     texture: String,
     #[inspect(proxy_type="VecDefaultInspect<SpriteConfig>")]
@@ -215,8 +226,9 @@ impl Module for SpriteModule {
     }
 
     fn start(&self, ctx: &mut StartContext) {
-        let mut asset_editor_res = ctx.world.write_resource::<AssetInspectorResources>();
-        asset_editor_res.add_factory(&".sheet.json", SerializeConfigInspectorFactory::<SpriteSheetConfig>::new())
+        if let Some(mut res) = ctx.world.try_fetch_mut::<AssetInspectorResources>() {
+            res.add_factory(".sheet.json", SerializeConfigInspectorFactory::<SpriteSheetConfig>::new())
+        }
     }
 }
 

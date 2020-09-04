@@ -7,13 +7,26 @@ pub struct VecDefaultInspect<T, U = T> where U: InspectRenderDefault<T> {
     marker: PhantomData<(T, U)>,
 }
 
-impl<T, TInspect> InspectRenderDefault<Vec<T>> for VecDefaultInspect<T, TInspect> where TInspect: InspectRenderDefault<T> {
+impl<T, TInspect> InspectRenderDefault<Vec<T>> for VecDefaultInspect<T, TInspect> where T: Default, TInspect: InspectRenderDefault<T> {
     fn render(data: &[&Vec<T>], label: &'static str, ui: &Ui, args: &InspectArgsDefault) {
         ui.text(im_str!("TODO: Vector"));
     }
 
     fn render_mut(data: &mut [&mut Vec<T>], label: &'static str, ui: &Ui, args: &InspectArgsDefault) -> bool {
-        ui.text(im_str!("TODO: Vector"));
+        assert_eq!(data.len(), 1, "Rendering >1 items not supported yet");
+        TreeNode::new(&im_str!("{}", label)).build(ui, || {
+            let v = &mut data[0];
+            for (i, item) in v.iter_mut().enumerate() {
+                let mut keep = true;
+                let show = CollapsingHeader::new(&im_str!("Item #{}", i))
+                    .build_with_close_button(ui, &mut keep);
+                if show {
+                    TInspect::render_mut(&mut [item], "", ui,
+                                         &InspectArgsDefault { header: Some(false), ..Default::default() });
+                }
+            }
+        });
+
         true
     }
 }

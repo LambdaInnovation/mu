@@ -204,8 +204,7 @@ impl<T, TInspect> AssetInspector for SerializeConfigInspector<T, TInspect>
 pub struct SerializeConfigInspectorFactory<T, TInspect = T>
     where T: Send + Sync + Serialize + DeserializeOwned,
           TInspect: Send + Sync + InspectRenderDefault<T> {
-    marker: PhantomData<T>,
-    marker2: PhantomData<TInspect>
+    marker: PhantomData<(T, TInspect)>,
 }
 
 impl<T, TInspect> SerializeConfigInspectorFactory<T, TInspect>
@@ -214,7 +213,6 @@ impl<T, TInspect> SerializeConfigInspectorFactory<T, TInspect>
     pub fn new() -> Self {
         Self {
             marker: PhantomData,
-            marker2: PhantomData
         }
     }
 }

@@ -18,6 +18,11 @@ use uuid::Uuid;
 use std::collections::HashMap;
 use shaderc::ShaderKind;
 use std::io::Cursor;
+use imgui_inspect_derive::Inspect;
+use imgui_inspect::{InspectRenderDefault, InspectArgsDefault};
+use imgui::*;
+use std::borrow::Cow;
+use crate::client::editor::asset_editor::{AssetInspectorResources, SerializeConfigInspectorFactory};
 
 pub const DEP_CAM_DRAW_SETUP: &str = "cam_draw_setup";
 pub const DEP_CAM_DRAW_TEARDOWN: &str = "cam_draw_teardown";
@@ -315,9 +320,46 @@ pub enum FilterMode {
     // TODO: Trilinear & mipmap
 }
 
-#[derive(Serialize, Deserialize)]
+impl InspectRenderDefault<FilterMode> for FilterMode {
+    fn render(data: &[&FilterMode], label: &'static str, ui: &Ui, args: &InspectArgsDefault) {
+        unimplemented!()
+    }
+
+    fn render_mut(data: &mut [&mut FilterMode], label: &'static str, ui: &Ui, args: &InspectArgsDefault) -> bool {
+        // ui.
+        true
+    }
+}
+
+pub struct WgpuAddressModeInspect;
+
+impl InspectRenderDefault<wgpu::AddressMode> for WgpuAddressModeInspect {
+    fn render(data: &[&wgpu::AddressMode], label: &'static str, ui: &Ui, args: &InspectArgsDefault) {
+        unimplemented!()
+    }
+
+    fn render_mut(data: &mut [&mut wgpu::AddressMode], label: &'static str, ui: &Ui, args: &InspectArgsDefault) -> bool {
+        let mut idx = *data[0] as usize;
+        ComboBox::new(&im_str!("{}", label))
+            .build_simple(ui,
+                          &mut idx,
+                          &[wgpu::AddressMode::ClampToEdge, wgpu::AddressMode::Repeat, wgpu::AddressMode::MirrorRepeat], &|x| {
+                    let s = match x {
+                        wgpu::AddressMode::MirrorRepeat => "MirrorRepeat",
+                        wgpu::AddressMode::Repeat => "Repeat",
+                        wgpu::AddressMode::ClampToEdge => "ClampToEdge"
+                    };
+                    Cow::from(im_str!("{}", s))
+                });
+        // ui.
+        true
+    }
+}
+
+#[derive(Serialize, Deserialize, Inspect)]
 pub struct SamplerConfig {
     #[serde(default)]
+    #[inspect(proxy_type="WgpuAddressModeInspect")]
     pub address: wgpu::AddressMode,
     pub filter: FilterMode
 }
@@ -339,11 +381,12 @@ fn create_sampler_from_config(device: &wgpu::Device, cfg: &SamplerConfig) -> wgp
     })
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Inspect)]
 struct TextureConfig {
     image: String,
     sampler: SamplerConfig,
     #[serde(skip)]
+    #[inspect(skip)]
     _path: String
 }
 
@@ -812,5 +855,9 @@ impl Module for GraphicsModule {
         );
     }
 
-    // fn start(&self, _start_data: &mut crate::StartData) {}
+    fn start(&self, ctx: &mut crate::StartContext) {
+        if let Some(mut res) = ctx.world.try_fetch_mut::<AssetInspectorResources>() {
+            res.add_factory(".tex.json", SerializeConfigInspectorFactory::<TextureConfig>::new())
+        }
+    }
 }
