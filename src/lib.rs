@@ -23,6 +23,7 @@ pub extern crate log;
 pub use wgpu;
 pub use specs;
 pub use bytemuck;
+use winit::dpi::PhysicalSize;
 
 pub mod asset;
 pub mod resource;
@@ -509,57 +510,65 @@ impl Runtime {
         let mut dispatcher = self.dispatcher;
         let mut world = self.world;
         let window = self.client_data.window;
-        self.client_data.event_loop.run(move |event, _, control_flow| {
+        self.client_data.event_loop.run(move |mut event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
 
-            match &event {
+            match &mut event {
                 Event::WindowEvent {
-                    event: WindowEvent::ScaleFactorChanged { scale_factor, .. }, ..
+                    event: WindowEvent::ScaleFactorChanged { scale_factor, new_inner_size },
+                    window_id
                 } => {
-                    info!("Scale factor changed!! {}", scale_factor);
+                    // ! 这里这个 reference 只会在当帧被使用，所以是安全的
+                    let static_inner_size: &'static mut PhysicalSize<u32> =
+                        unsafe { std::mem::transmute_copy(&*new_inner_size) };
+                    let static_event = WindowEvent::ScaleFactorChanged {
+                        scale_factor: *scale_factor,
+                        new_inner_size: static_inner_size
+                    };
+
+                    let mut window_info = world.write_resource::<WindowInfo>();
+                    window_info.frame_event_list.push(Event::WindowEvent { window_id: *window_id, event: static_event});
+
+                    // info!("Scale factor changed!! {}", scale_factor);
                 }
-                _ => ()
-            }
-
-            let opt_ev = event.to_static();
-            {
-                let mut window_info = world.write_resource::<WindowInfo>();
-                match opt_ev.clone() {
-                    Some(ev) => window_info.frame_event_list.push(ev),
-                    _ => ()
-                }
-            }
-
-            if let Some(event) = opt_ev {
-                match event {
-                    Event::LoopDestroyed => return,
-                    Event::MainEventsCleared => {
-                        Self::update_one_frame(&*window, &mut world, &mut dispatcher);
-                    },
-                    Event::WindowEvent { event, .. } => {
-                        let mut raw_input = world.write_resource::<RawInputData>();
-                        raw_input.on_window_event(&event);
-                        match event {
-                            WindowEvent::Resized(physical_size) => {
-                                let mut window_info = world.write_resource::<WindowInfo>();
-                                window_info.pixel_size = (physical_size.width, physical_size.height);
-
-                                let mut ws = world.write_resource::<WgpuState>();
-                                ws.sc_desc.width = physical_size.width;
-                                ws.sc_desc.height = physical_size.height;
-                                ws.swap_chain = ws.device.create_swap_chain(&ws.surface, &ws.sc_desc);
-                            }
-                            WindowEvent::CloseRequested => {
-                                *control_flow = winit::event_loop::ControlFlow::Exit;
+                _ => {
+                    let opt_ev = event.to_static();
+                    if let Some(ev) = opt_ev {
+                        { // Push to window event list
+                            let mut window_info = world.write_resource::<WindowInfo>();
+                            window_info.frame_event_list.push(ev.clone());
+                        }
+                        match ev {
+                            Event::LoopDestroyed => return,
+                            Event::MainEventsCleared => {
+                                Self::update_one_frame(&*window, &mut world, &mut dispatcher);
                             },
+                            Event::WindowEvent { event, .. } => {
+                                let mut raw_input = world.write_resource::<RawInputData>();
+                                raw_input.on_window_event(&event);
+                                match event {
+                                    WindowEvent::Resized(physical_size) => {
+                                        let mut window_info = world.write_resource::<WindowInfo>();
+                                        window_info.pixel_size = (physical_size.width, physical_size.height);
+
+                                        let mut ws = world.write_resource::<WgpuState>();
+                                        ws.sc_desc.width = physical_size.width;
+                                        ws.sc_desc.height = physical_size.height;
+                                        ws.swap_chain = ws.device.create_swap_chain(&ws.surface, &ws.sc_desc);
+                                    }
+                                    WindowEvent::CloseRequested => {
+                                        *control_flow = winit::event_loop::ControlFlow::Exit;
+                                    },
+                                    _ => ()
+                                }
+                            }
+                            Event::DeviceEvent { event, .. } => {
+                                let mut raw_input = world.write_resource::<RawInputData>();
+                                raw_input.on_device_event(&event);
+                            }
                             _ => ()
                         }
                     }
-                    Event::DeviceEvent { event, .. } => {
-                        let mut raw_input = world.write_resource::<RawInputData>();
-                        raw_input.on_device_event(&event);
-                    }
-                    _ => ()
                 }
             }
         })
