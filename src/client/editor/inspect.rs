@@ -2,6 +2,7 @@ use imgui_inspect::{InspectRenderDefault, InspectArgsDefault};
 use crate::math::*;
 use imgui::*;
 use serde::export::PhantomData;
+use wgpu_glyph::HorizontalAlign;
 
 pub struct VecDefaultInspect<T, U = T> where U: InspectRenderDefault<T> {
     marker: PhantomData<(T, U)>,
@@ -36,6 +37,16 @@ impl<T, TInspect> InspectRenderDefault<Vec<T>> for VecDefaultInspect<T, TInspect
                 for i in indices_to_remove.iter().rev() {
                     v.remove(*i);
                 }
+            }
+
+            if ui.button(im_str!("Add"), [40., 20.]) {
+                changed = true;
+                v.push(T::default());
+            }
+            ui.same_line(0.);
+            if ui.button(im_str!("Clear"), [40., 20.]) {
+                changed = true;
+                v.clear();
             }
         });
 
