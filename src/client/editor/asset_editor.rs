@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use crate::util::Color;
 use crate::client::editor::EditorUIResources;
 use imgui_inspect::*;
-use serde::{Deserialize, Serialize};
+use serde::*;
 use serde::de::DeserializeOwned;
 use std::marker::PhantomData;
 use crate::asset::*;
@@ -202,13 +202,13 @@ impl<T, TInspect> SerializeConfigInspector<T, TInspect>
     TInspect: InspectRenderDefault<T> + Send + Sync {
 
     fn save(&self) {
-        let serialized_json = serde_json::to_string(&self.repr)
+        let serialized_json = serde_json::to_string_pretty(&self.repr)
             .expect("Serialize failed");
 
         let rpath = self.path.to_str().unwrap().to_string();
         let fs_path = get_fs_path(&rpath);
 
-        fs::write(&fs_path, serialized_json);
+        fs::write(&fs_path, serialized_json).expect("Write file failed");
         info!("Write to {:?}", fs_path);
     }
 

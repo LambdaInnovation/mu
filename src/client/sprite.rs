@@ -46,7 +46,7 @@ impl Default for SpriteConfig {
 #[derive(Serialize, Deserialize, Default, Inspect)]
 pub struct SpriteSheetConfig {
     texture: String,
-    #[inspect(proxy_type="VecDefaultInspect<SpriteConfig>")]
+    #[inspect(proxy_type="VecDefaultInspect<_>")]
     sprites: Vec<SpriteConfig>,
     ppu: u32,
     #[serde(skip)]

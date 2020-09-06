@@ -100,7 +100,7 @@ impl<'a> System<'a> for DefaultProtoStoreSystem {
                 .map(|entity| Self::store_components(*entity, &ctx, &cmpt_read))
                 .collect::<Vec<_>>();
 
-            let result = serde_json::to_string(&Value::Array(json_values))
+            let result = serde_json::to_string_pretty(&Value::Array(json_values))
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))
                 .and_then(|s| std::fs::write(&req.path, s.as_bytes()));
 
