@@ -508,3 +508,26 @@ impl<'a> System<'a> for SpriteRenderSystem {
     }
 
 }
+
+pub(super) mod editor {
+    use super::*;
+    use std::path::PathBuf;
+    use specs_derive::Component;
+
+    #[derive(Component)]
+    #[storage(HashMapStorage)]
+    struct SpriteSheetEditor {
+        pub sheet: ResourceRef<SpriteSheet>,
+        pub path: PathBuf,
+    }
+
+    pub struct SpriteSheetEditorSystem;
+
+    impl<'a> System<'a> for SpriteSheetEditorSystem {
+        type SystemData = ReadStorage<'a, SpriteSheetEditor>;
+
+        fn run(&mut self, data: Self::SystemData) {
+        }
+    }
+
+}

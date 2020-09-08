@@ -344,6 +344,18 @@ pub trait Module {
     fn get_submodules(&mut self) -> Vec<Box<dyn Module>> {
         vec![]
     }
+    /// If this module needs to be depended on, this is the id of the module.
+    fn name() -> &'static str
+        where Self: Sized {
+        ""
+    }
+    /// Return the dependencies of the module.
+    ///
+    /// The closure will be invoked to create the module, if the module isn't already present.
+    fn deps() -> Vec<(&'static str, Box<dyn FnOnce() -> dyn Module>)>
+        where Self: Sized {
+        vec![]
+    }
 }
 
 /// Use `RuntimeBuilder` to specify game's startup information and then start the game.
