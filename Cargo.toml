@@ -33,15 +33,15 @@ strum_macros = "0.19"
 # Client only
 winit = "0.22"
 
-wgpu = "0.5"
-wgpu-types = { version="0.5", features=["serde"] }
+wgpu = "0.6"
+wgpu-types = { version="0.6", features=["serde"] }
 
 shaderc = "0.6"
 
-wgpu_glyph = "0.9"
+wgpu_glyph = "0.10"
 
 imgui = "*"
 imgui-winit-support = "*"
-imgui-wgpu = "0.8"
+imgui-wgpu = "0.9"
 imgui-inspect = "0.5"
 imgui-inspect-derive = "0.5"

@@ -20,6 +20,7 @@ use serde_json::Value;
 use imgui_inspect_derive::Inspect;
 use super::editor::inspect::*;
 use crate::client::editor::asset_editor::{AssetInspectorResources, SerializeConfigInspectorFactory};
+use wgpu::util::DeviceExt;
 
 #[derive(Serialize, Clone, Deserialize, Inspect)]
 pub struct SpriteConfig {
@@ -329,23 +330,32 @@ impl SpriteRenderSystem {
             SpriteVertex::new(0.5, 0.5, 1., 1.),
             SpriteVertex::new(0.5, -0.5, 1., 0.)
         ];
-        let vbo = wgpu_state.device.create_buffer_with_data(
-            bytemuck::cast_slice(&[vertices]),
-            wgpu::BufferUsage::VERTEX
+        let vbo = wgpu_state.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: &bytemuck::cast_slice(&[vertices]),
+                usage: wgpu::BufferUsage::VERTEX
+            }
         );
 
         let indices = [0u16, 1, 2, 0, 2, 3];
-        let ibo = wgpu_state.device.create_buffer_with_data(
-            &bytemuck::cast_slice(&indices),
-            wgpu::BufferUsage::INDEX
+        let ibo = wgpu_state.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: &bytemuck::cast_slice(&indices),
+                usage: wgpu::BufferUsage::INDEX
+            }
         );
 
         let pipeline_layout = wgpu_state.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            bind_group_layouts: &[&program.bind_group_layout]
+            label: None,
+            bind_group_layouts: &[&program.bind_group_layout],
+            push_constant_ranges: &[]
         });
 
         let pipeline = wgpu_state.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            layout: &pipeline_layout,
+            label: None,
+            layout: Some(&pipeline_layout),
             vertex_stage: program.vertex_desc(),
             fragment_stage: Some(program.fragment_desc()),
             rasterization_state: None,
@@ -410,9 +420,12 @@ impl SpriteRenderSystem {
             })
             .collect::<Vec<_>>();
 
-        let instance_buf = wgpu_state.device.create_buffer_with_data(
-            bytemuck::cast_slice(&instance_data),
-            wgpu::BufferUsage::VERTEX
+        let instance_buf = wgpu_state.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: &bytemuck::cast_slice(&instance_data),
+                usage: wgpu::BufferUsage::VERTEX
+            }
         );
 
         graphics::with_render_data(|r| {
@@ -452,9 +465,9 @@ impl SpriteRenderSystem {
                 let mut render_pass = cam.render_pass(wgpu_state);
                 render_pass.set_pipeline(&self.pipeline);
                 render_pass.set_bind_group(0, bind_group, &[]);
-                render_pass.set_vertex_buffer(0, &self.vbo, 0, 0);
-                render_pass.set_vertex_buffer(1, &instance_buf, 0, 0);
-                render_pass.set_index_buffer(&self.ibo, 0, 0);
+                render_pass.set_vertex_buffer(0, self.vbo.slice(..));
+                render_pass.set_vertex_buffer(1, instance_buf.slice(..));
+                render_pass.set_index_buffer(self.ibo.slice(..));
 
                 render_pass.draw_indexed(0..6, 0, 0..instance_data.len() as u32);
             }

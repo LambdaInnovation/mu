@@ -48,13 +48,28 @@ impl Component for WorldText {
 mod internal {
     use super::*;
 
-    pub struct WorldTextRenderSystem {}
+    pub struct WorldTextRenderSystem {
+        staging_belt: wgpu::util::StagingBelt
+    }
+
+    impl WorldTextRenderSystem {
+
+        pub fn new() -> Self {
+            Self {
+                staging_belt: wgpu::util::StagingBelt::new(1024)
+            }
+        }
+
+    }
 
     impl<'a> System<'a> for WorldTextRenderSystem {
         type SystemData = (ReadExpect<'a, WgpuState>, WriteExpect<'a, FontRuntimeData>, ReadStorage<'a, WorldText>, ReadStorage<'a, Transform>);
 
         fn run(&mut self, (wgpu_state, mut font_data, world_text_read, transform_read): Self::SystemData) {
             let ref mut glyph_brush = font_data.glyph_brush;
+
+            // Recall the staging belt
+            futures::executor::block_on(self.staging_belt.recall());
 
             with_render_data(|rd| {
                 for cam in &mut rd.camera_infos {
@@ -73,12 +88,14 @@ mod internal {
                         let scl_mat = Mat4::from_nonuniform_scale(scl, -scl, 1.);
                         let wvp_mat = cam.wvp_matrix * trans.get_world_view() * scl_mat;
 
-                        glyph_brush.draw_queued_with_transform(&wgpu_state.device, &mut cam.encoder,
-                           &wgpu_state.frame_texture.as_ref().unwrap().view, mat::to_array(wvp_mat))
+                        glyph_brush.draw_queued_with_transform(&wgpu_state.device, &mut self.staging_belt, &mut cam.encoder,
+                           &wgpu_state.frame_texture.as_ref().unwrap().output.view, mat::to_array(wvp_mat))
                             .unwrap();
                     }
                 }
             });
+
+            self.staging_belt.finish();
         }
     }
 
@@ -92,7 +109,7 @@ impl Module for TextModule {
             InsertInfo::new("")
                 .after(&[DEP_CAM_DRAW_SETUP])
                 .before(&[DEP_CAM_DRAW_TEARDOWN]),
-            |_, i| i.insert_thread_local(internal::WorldTextRenderSystem {})
+            |_, i| i.insert_thread_local(internal::WorldTextRenderSystem::new())
         );
     }
 

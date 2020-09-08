@@ -511,23 +511,24 @@ pub struct WgpuState {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub swap_chain: wgpu::SwapChain,
-    pub frame_texture: Option<wgpu::SwapChainOutput>,
+    pub frame_texture: Option<wgpu::SwapChainFrame>,
     pub sc_desc: wgpu::SwapChainDescriptor,
 }
 
 impl WgpuState {
 
     pub async fn new(window: &Window) -> Self {
-        let surface = wgpu::Surface::create(window);
-        let adapter = wgpu::Adapter::request(
+        let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
+        let surface = unsafe { instance.create_surface(window) };
+        let adapter = instance.request_adapter(
             &wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface)
             },
-            wgpu::BackendBit::PRIMARY
         ).await.unwrap();
 
-        let (device, queue) = adapter.request_device(&Default::default()).await;
+        // TODO: API-call tracing?
+        let (device, queue) = adapter.request_device(&Default::default(), None).await.unwrap();
         let size = window.inner_size();
 
         let sc_desc = wgpu::SwapChainDescriptor {
@@ -661,7 +662,7 @@ impl Runtime {
         // Swap texture
         {
             let mut wgpu_state = world.write_resource::<WgpuState>();
-            wgpu_state.frame_texture = Some(wgpu_state.swap_chain.get_next_texture().unwrap());
+            wgpu_state.frame_texture = Some(wgpu_state.swap_chain.get_current_frame().unwrap());
 
             let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: None
@@ -671,17 +672,18 @@ impl Runtime {
             encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[
                     wgpu::RenderPassColorAttachmentDescriptor {
-                        attachment: &wgpu_state.frame_texture.as_ref().unwrap().view,
+                        attachment: &wgpu_state.frame_texture.as_ref().unwrap().output.view,
                         resolve_target: None,
-                        load_op: wgpu::LoadOp::Clear,
-                        store_op: wgpu::StoreOp::Store,
-                        clear_color: Color::rgb(0.0, 0.0, 0.0).into()
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(Color::black().into()),
+                            store: true
+                        },
                     }
                 ],
                 depth_stencil_attachment: None
             });
 
-            wgpu_state.queue.submit(&[encoder.finish()]);
+            wgpu_state.queue.submit(Some(encoder.finish()));
         }
 
         dispatcher.dispatch(world);

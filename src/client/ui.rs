@@ -328,6 +328,7 @@ mod internal {
     use crate::resource::ResManager;
     use std::collections::HashMap;
     use crate::client::text::FontRuntimeData;
+    use wgpu::util::DeviceExt;
 
     // #[derive(Default)]
     pub struct WidgetRuntimeInfo {
@@ -846,18 +847,24 @@ mod internal {
                 }
             ]);
             let program = res_mgr.add(program);
+            let vbo = wgpu_state.device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: None,
+                    contents: bytemuck::cast_slice(&[
+                        ImageVertex::new(0., 0., 0., 0.),
+                        ImageVertex::new(0., 1., 0., 1.),
+                        ImageVertex::new(1., 1., 1., 1.),
+                        ImageVertex::new(1., 0., 1., 0.)
+                    ]),
+                    usage: wgpu::BufferUsage::VERTEX
+                });
 
-            let vbo = wgpu_state.device.create_buffer_with_data(bytemuck::cast_slice(&[
-                    ImageVertex::new(0., 0., 0., 0.),
-                    ImageVertex::new(0., 1., 0., 1.),
-                    ImageVertex::new(1., 1., 1., 1.),
-                    ImageVertex::new(1., 0., 1., 0.)
-                ]),
-                wgpu::BufferUsage::VERTEX);
-
-            let ibo = wgpu_state.device.create_buffer_with_data(
-                bytemuck::cast_slice(&[0u16, 1, 2, 0, 2, 3]),
-                wgpu::BufferUsage::INDEX
+            let ibo = wgpu_state.device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: None,
+                    contents: bytemuck::cast_slice(&[0u16, 1, 2, 0, 2, 3]),
+                    usage: wgpu::BufferUsage::INDEX
+                }
             );
 
             let white_texture = res_mgr.add(graphics::create_texture(
@@ -875,11 +882,14 @@ mod internal {
             let program_inst = res_mgr.get(&program);
 
             let pipeline_layout = wgpu_state.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                bind_group_layouts: &[&program_inst.bind_group_layout]
+                label: None,
+                bind_group_layouts: &[&program_inst.bind_group_layout],
+                push_constant_ranges: &[]
             });
             
             let pipeline = wgpu_state.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                layout: &pipeline_layout,
+                label: None,
+                layout: Some(&pipeline_layout),
                 vertex_stage: program_inst.vertex_desc(),
                 fragment_stage: Some(program_inst.fragment_desc()),
                 rasterization_state: None,
@@ -915,6 +925,7 @@ mod internal {
 
     pub struct UIRenderSystem {
         image_data: UIImageRenderData,
+        text_staging_belt: wgpu::util::StagingBelt,
     }
 
     impl UIRenderSystem {
@@ -924,6 +935,7 @@ mod internal {
             let image_data = UIImageRenderData::new(&mut init_data.res_mgr, &*wgpu_state);
             Self {
                 image_data,
+                text_staging_belt: wgpu::util::StagingBelt::new(1024),
             }
         }
 
@@ -970,27 +982,31 @@ mod internal {
                                 i_uv_max: [uv1.x, uv1.y],
                                 i_color: color.into(),
                             }];
-                            let instance_buf = wgpu_state.device.create_buffer_with_data(
-                                bytemuck::cast_slice(&instances),
-                                wgpu::BufferUsage::VERTEX
+                            let instance_buf = wgpu_state.device.create_buffer_init(
+                                &wgpu::util::BufferInitDescriptor {
+                                    label: None,
+                                    contents: bytemuck::cast_slice(&instances),
+                                    usage: wgpu::BufferUsage::VERTEX
+                                }
                             );
 
                             let bind_group = image_data.default_material.get_bind_group(&*res_mgr, &wgpu_state.device);
                             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                                 color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                                    attachment: &wgpu_state.frame_texture.as_ref().unwrap().view,
+                                    attachment: &wgpu_state.frame_texture.as_ref().unwrap().output.view,
                                     resolve_target: None,
-                                    load_op: wgpu::LoadOp::Load,
-                                    store_op: wgpu::StoreOp::Store,
-                                    clear_color: Default::default()
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Load,
+                                        store: true
+                                    },
                                 }],
                                 depth_stencil_attachment: None
                             });
                             render_pass.set_pipeline(&image_data.default_pipeline);
                             render_pass.set_bind_group(0, &bind_group, &[]);
-                            render_pass.set_vertex_buffer(0, &image_data.vbo, 0, 0);
-                            render_pass.set_vertex_buffer(1, &instance_buf, 0, 0);
-                            render_pass.set_index_buffer(&image_data.ibo, 0, 0);
+                            render_pass.set_vertex_buffer(0, image_data.vbo.slice(..));
+                            render_pass.set_vertex_buffer(1, instance_buf.slice(..));
+                            render_pass.set_index_buffer(image_data.ibo.slice(..));
                             render_pass.draw_indexed(0..6, 0, 0..1);
                         },
                         DrawInstance::Text { wvp, rect_size, text, font, color, v_align, h_aligh, size } => {
@@ -1003,15 +1019,17 @@ mod internal {
                             });
 
                             font_data.glyph_brush_ui.draw_queued_with_transform(
-                                &wgpu_state.device, &mut encoder,
-                                &wgpu_state.frame_texture.as_ref().unwrap().view,
+                                &wgpu_state.device, &mut self.text_staging_belt, &mut encoder,
+                                &wgpu_state.frame_texture.as_ref().unwrap().output.view,
                                 mat::to_array(wvp)).expect("Render text failed");
                         }
                     }
                 }
             }
 
-            wgpu_state.queue.submit(&[encoder.finish()]);
+            self.text_staging_belt.finish();
+            wgpu_state.queue.submit(Some(encoder.finish()));
+            futures::executor::block_on(self.text_staging_belt.recall());
         }
     }
 }

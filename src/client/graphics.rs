@@ -17,13 +17,13 @@ use crate::util::Color;
 use uuid::Uuid;
 use std::collections::HashMap;
 use shaderc::ShaderKind;
-use std::io::Cursor;
 use imgui_inspect_derive::Inspect;
 use crate::client::editor::asset_editor::{AssetInspectorResources, SerializeConfigInspectorFactory};
 use crate::client::editor::inspect::*;
 use strum_macros::*;
 use imgui::*;
 use imgui_inspect::*;
+use wgpu::util::DeviceExt;
 
 pub const DEP_CAM_DRAW_SETUP: &str = "cam_draw_setup";
 pub const DEP_CAM_DRAW_TEARDOWN: &str = "cam_draw_teardown";
@@ -159,11 +159,12 @@ impl CamRenderData {
         let render_pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             color_attachments: &[
                 wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: &wgpu_state.frame_texture.as_ref().unwrap().view,
+                    attachment: &wgpu_state.frame_texture.as_ref().unwrap().output.view,
                     resolve_target: None,
-                    load_op: wgpu::LoadOp::Load,
-                    store_op: wgpu::StoreOp::Store,
-                    clear_color: Default::default()
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: true
+                    }
                 }
             ],
             depth_stencil_attachment: None
@@ -271,16 +272,16 @@ pub fn load_shader_by_content(device: &wgpu::Device, vertex: &str, fragment: &st
     let fs_spirv = compiler.compile_into_spirv(fragment,
                                                ShaderKind::Fragment, "shader.frag", frag_filename, None).unwrap();
 
-    let vs_data = wgpu::read_spirv(Cursor::new(vs_spirv.as_binary_u8())).unwrap();
-    let fs_data = wgpu::read_spirv(Cursor::new(fs_spirv.as_binary_u8())).unwrap();
+    let vs_data = wgpu::util::make_spirv(vs_spirv.as_binary_u8());
+    let fs_data = wgpu::util::make_spirv(fs_spirv.as_binary_u8());
 
-    let vs_module = device.create_shader_module(&vs_data);
-    let fs_module = device.create_shader_module(&fs_data);
+    let vs_module = device.create_shader_module(vs_data);
+    let fs_module = device.create_shader_module(fs_data);
 
     let label = format!("{}:{}", vert_filename, frag_filename);
     let descriptor = wgpu::BindGroupLayoutDescriptor {
         label: Some(&label), // TODO: Better label
-        bindings: &uniform_layout.iter()
+        entries: &uniform_layout.iter()
             .map(|x| {
                 wgpu::BindGroupLayoutEntry {
                     binding: x.binding,
@@ -291,7 +292,9 @@ pub fn load_shader_by_content(device: &wgpu::Device, vertex: &str, fragment: &st
                     },
                     ty: match &x.ty {
                         UniformBindingType::DataBlock { .. } => wgpu::BindingType::UniformBuffer {
-                            dynamic: false
+                            dynamic: false,
+                            // TODO: Take advantage of the validation functionality
+                            min_binding_size: None
                         },
                         UniformBindingType::Texture => wgpu::BindingType::SampledTexture {
                             dimension: wgpu::TextureViewDimension::D2,
@@ -301,7 +304,8 @@ pub fn load_shader_by_content(device: &wgpu::Device, vertex: &str, fragment: &st
                         UniformBindingType::Sampler => wgpu::BindingType::Sampler {
                             comparison: false
                         },
-                    }
+                    },
+                    count: None
                 }
             })
             .collect::<Vec<_>>(),
@@ -366,13 +370,15 @@ fn create_sampler_from_config(device: &wgpu::Device, cfg: &SamplerConfig) -> wgp
 
     let wgpu_address = cfg.address.into();
     device.create_sampler(&wgpu::SamplerDescriptor {
+        label: None,
         address_mode_u: wgpu_address,
         address_mode_v: wgpu_address,
         address_mode_w: wgpu_address,
         min_filter, mag_filter, mipmap_filter,
         lod_min_clamp: 0.,
         lod_max_clamp: 0.,
-        compare: wgpu::CompareFunction::Always
+        compare: None,
+        anisotropy_clamp: None
     })
 }
 
@@ -420,7 +426,6 @@ pub fn create_texture(wgpu_state: &WgpuState, rgba_bytes: Vec<u8>, dims: (u32, u
     };
     let raw_texture = wgpu_state.device.create_texture(&wgpu::TextureDescriptor {
         size: extent,
-        array_layer_count: 1,
         mip_level_count: 1, // TODO: mipmap
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -429,9 +434,12 @@ pub fn create_texture(wgpu_state: &WgpuState, rgba_bytes: Vec<u8>, dims: (u32, u
         label: Some("texture")
     });
 
-    let buffer = wgpu_state.device.create_buffer_with_data(
-        &rgba_bytes,
-        wgpu::BufferUsage::COPY_SRC
+    let buffer = wgpu_state.device.create_buffer_init(
+        &wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: &rgba_bytes,
+            usage: wgpu::BufferUsage::COPY_SRC
+        }
     );
 
     let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -441,22 +449,23 @@ pub fn create_texture(wgpu_state: &WgpuState, rgba_bytes: Vec<u8>, dims: (u32, u
     encoder.copy_buffer_to_texture(
         wgpu::BufferCopyView {
             buffer: &buffer,
-            offset: 0,
-            bytes_per_row: 4 * dims.0,
-            rows_per_image: dims.1
+            layout: wgpu::TextureDataLayout {
+                offset: 0,
+                bytes_per_row: 4 * dims.0,
+                rows_per_image: dims.1
+            }
         },
         wgpu::TextureCopyView {
             texture: &raw_texture,
             mip_level: 0,
-            array_layer: 0,
             origin: wgpu::Origin3d::ZERO
         },
         extent
     );
 
-    wgpu_state.queue.submit(&[encoder.finish()]);
+    wgpu_state.queue.submit(Some(encoder.finish()));
 
-    let default_view = raw_texture.create_default_view();
+    let default_view = raw_texture.create_view(&Default::default());
     let sampler = create_sampler_from_config(&wgpu_state.device, sampler_cfg);
 
     let ret = Texture {
@@ -758,18 +767,21 @@ impl Material {
                     _ => panic!()
                 };
                 assert_eq!(*flags, (1 << count) - 1, "DataBlock not filled");
-                *buf = Some(device.create_buffer_with_data(
-                    bytemuck::cast_slice(floats),
-                    wgpu::BufferUsage::UNIFORM
+                *buf = Some(device.create_buffer_init(
+                    &wgpu::util::BufferInitDescriptor {
+                        label: None,
+                        contents: bytemuck::cast_slice(floats),
+                        usage: wgpu::BufferUsage::UNIFORM
+                    }
                 ))
             }
         }
 
-        let mut bindings: Vec<wgpu::Binding> = vec![];
+        let mut bindings: Vec<wgpu::BindGroupEntry> = vec![];
         for x in &data_vec {
             match x {
                 FillEntry::Property(binding, p) => {
-                    bindings.push(wgpu::Binding {
+                    bindings.push(wgpu::BindGroupEntry {
                         binding: *binding,
                         resource: match p.expect("Property not assigned") {
                             MatProperty::Sampler(smp) =>
@@ -785,12 +797,10 @@ impl Material {
                     });
                 },
                 FillEntry::DataBlock(binding, floats, _, buf) => {
-                    bindings.push(wgpu::Binding {
+                    let slice = buf.as_ref().unwrap().slice(0..((floats.len() * std::mem::size_of::<f32>()) as wgpu::BufferAddress));
+                    bindings.push(wgpu::BindGroupEntry {
                         binding: *binding,
-                        resource: wgpu::BindingResource::Buffer {
-                            buffer: buf.as_ref().unwrap(),
-                            range: 0..((floats.len() * std::mem::size_of::<f32>()) as wgpu::BufferAddress)
-                        }
+                        resource: wgpu::BindingResource::Buffer(slice)
                     });
                 }
             }
@@ -798,8 +808,8 @@ impl Material {
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &program.bind_group_layout,
-            bindings: &bindings,
-            label: Some("Some material")
+            label: Some("Some material"),
+            entries: &bindings
         });
 
         drop(bindings);
@@ -876,11 +886,12 @@ mod internal {
                         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             color_attachments: &[
                                 wgpu::RenderPassColorAttachmentDescriptor {
-                                    attachment: &wgpu_state.frame_texture.as_ref().unwrap().view,
+                                    attachment: &wgpu_state.frame_texture.as_ref().unwrap().output.view,
                                     resolve_target: None,
-                                    load_op: wgpu::LoadOp::Clear,
-                                    store_op: wgpu::StoreOp::Store,
-                                    clear_color: color.into()
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(color.into()),
+                                        store: true
+                                    }
                                 }
                             ],
                             depth_stencil_attachment: None
@@ -912,7 +923,7 @@ mod internal {
         fn run(&mut self, wgpu_state: Self::SystemData) {
             let result = clear_render_data();
             wgpu_state.queue.submit(
-                &result.camera_infos
+                result.camera_infos
                     .into_iter()
                     .map(|x| x.encoder.finish())
                     .collect::<Vec<_>>())

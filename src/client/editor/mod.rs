@@ -154,7 +154,7 @@ struct EditorUITeardownSystem {
 impl EditorUITeardownSystem {
     pub fn new(context: &mut imgui::Context, wgpu_state: &WgpuState) -> EditorUITeardownSystem {
         let renderer =
-            Renderer::new(context, &wgpu_state.device, &wgpu_state.queue, wgpu_state.sc_desc.format, None);
+            Renderer::new(context, &wgpu_state.device, &wgpu_state.queue, wgpu_state.sc_desc.format);
         Self {
             renderer,
         }
@@ -173,12 +173,26 @@ impl<'a> System<'a> for EditorUITeardownSystem {
                     label: Some("Mu editor")
                 });
 
+                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    color_attachments: &[
+                        wgpu::RenderPassColorAttachmentDescriptor {
+                            attachment: &wgpu_state.frame_texture.as_ref().unwrap().output.view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: true
+                            }
+                        }
+                    ],
+                    depth_stencil_attachment: None
+                });
+
                 self.renderer
-                    .render(&draw_data, &wgpu_state.device, &mut encoder,
-                            &wgpu_state.frame_texture.as_ref().unwrap().view)
+                    .render(&draw_data, &wgpu_state.queue, &wgpu_state.device, &mut rpass)
                     .expect("Rendering imgui failed");
 
-                wgpu_state.queue.submit(&[encoder.finish()]);
+                drop(rpass);
+                wgpu_state.queue.submit(Some(encoder.finish()));
             }
             _ => (),
         }
