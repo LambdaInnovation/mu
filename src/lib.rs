@@ -24,6 +24,7 @@ pub use wgpu;
 pub use specs;
 pub use bytemuck;
 use winit::dpi::PhysicalSize;
+use std::collections::HashSet;
 
 pub mod asset;
 pub mod resource;
@@ -182,7 +183,6 @@ impl<T: TDispatchItem> DispatchGroup<T> {
 
     pub fn post_dispatch<F>(mut self, mut visitor: F) where F: FnMut(T) {
         use std::collections::HashMap;
-        use std::collections::HashSet;
 
         // First, sort with order
         self.items.sort_by_key(|x| x.insert_info().order);
@@ -272,19 +272,23 @@ pub struct InitData {
 pub struct InitContext {
     group_normal: DispatchGroup<DispatchItem>,
     group_thread_local: DispatchGroup<ThreadLocalDispatchItem>,
-    pub init_data: InitData
+    pub init_data: InitData,
+    pub existing_modules: HashSet<&'static str>
 }
 
 impl InitContext {
-    pub fn new(res_mgr: ResManager, window: Rc<Window>, world: World) -> InitContext {
+    pub fn new(res_mgr: ResManager, window: Rc<Window>, world: World,
+               existing_modules: HashSet<&'static str>)
+        -> InitContext {
         InitContext {
             group_normal: DispatchGroup::new(),
             group_thread_local: DispatchGroup::new(),
             init_data: InitData {
                 res_mgr,
                 window,
-                world
-            }
+                world,
+            },
+            existing_modules
         }
     }
 
@@ -342,21 +346,21 @@ pub struct StartContext<'a> {
 pub trait Module {
     fn init(&self, _ctx: &mut InitContext) {}
     fn start(&self, _ctx: &mut StartContext) {}
-    fn get_submodules(&mut self) -> Vec<Box<dyn Module>> {
-        vec![]
-    }
     /// If this module needs to be depended on, this is the id of the module.
-    fn name() -> &'static str
-        where Self: Sized {
+    fn name(&self) -> &'static str {
         ""
     }
     /// Return the dependencies of the module.
     ///
     /// The closure will be invoked to create the module, if the module isn't already present.
-    fn deps() -> Vec<(&'static str, Box<dyn FnOnce() -> dyn Module>)>
-        where Self: Sized {
+    fn deps(&self) -> Vec<(&'static str, Box<dyn FnOnce() -> Box<dyn Module>>)> {
         vec![]
     }
+
+    // Module本身就有dependencies，再加上submodule的功能显得非常混乱，暂时先不实现，再斟酌下
+    // fn get_submodules(&mut self) -> Vec<Box<dyn Module>> {
+    //     vec![]
+    // }
 }
 
 /// Use `RuntimeBuilder` to specify game's startup information and then start the game.
@@ -383,15 +387,75 @@ impl RuntimeBuilder {
         self
     }
 
-    fn add_game_module_impl(&mut self, mut module: Box<dyn Module>) {
-        for sub_module in module.get_submodules() {
-            self.add_game_module_impl(sub_module);
-        }
+    fn add_game_module_impl(&mut self, module: Box<dyn Module>) {
+        // for sub_module in module.get_submodules() {
+        //     self.add_game_module_impl(sub_module);
+        // }
         self.modules.push(module);
+    }
+
+    fn _build_existing_modules(&self) -> HashSet<&'static str> {
+        let mut existing_modules: HashSet<&'static str> = HashSet::new();
+        for module in &self.modules {
+            if module.name() != "" {
+                existing_modules.insert(module.name());
+            }
+        }
+        existing_modules
     }
 
     pub fn build(mut self) -> Runtime {
         let mut world = World::new();
+
+        let existing_modules = self._build_existing_modules();
+
+        let mut new_modules = vec![];
+        for module in &self.modules {
+            let deps = module.deps();
+            for (module_name, factory) in deps {
+                if !existing_modules.contains(module_name) {
+                    let module = factory();
+                    new_modules.push(module);
+                }
+            }
+        }
+
+        for module in new_modules {
+            self.add_game_module_impl(module);
+        }
+
+        // Topology sort modules
+        {
+            let mut satisfied_deps = HashSet::new();
+            let ref mut remain_modules = self.modules;
+            let mut result_modules = vec![];
+
+            while remain_modules.len() > 0 {
+                let mut has_changed = false;
+                for i in (0..remain_modules.len()).rev() {
+                    let deps = remain_modules[i].deps();
+                    let satisfy = deps.iter().all(|(x, _)| satisfied_deps.contains(x));
+                    if satisfy {
+                        has_changed = true;
+                        let name = remain_modules[i].name();
+                        if !name.is_empty() {
+                            satisfied_deps.insert(name);
+                        }
+
+                        result_modules.push(remain_modules.remove(i));
+                        break
+                    }
+                }
+
+                if !has_changed {
+                    panic!("Module contains unresolvable dependency");
+                }
+            }
+
+            std::mem::swap(&mut self.modules, &mut result_modules);
+        }
+
+        let existing_modules = self._build_existing_modules();
 
         // ======= WINDOWS CREATION =======
         let client_data = futures::executor::block_on(ClientRuntimeData::create(self.name, &mut world));
@@ -400,7 +464,7 @@ impl RuntimeBuilder {
         let mut dispatcher_builder = specs::DispatcherBuilder::new();
         let res_mgr = ResManager::new();
         let mut init_ctx = crate::InitContext::new(
-            res_mgr, client_data.window.clone(), world);
+            res_mgr, client_data.window.clone(), world, existing_modules);
 
         // Default systems
         dispatcher_builder.add(HierarchySystem::<HasParent>::new(&mut init_ctx.init_data.world), "", &[]);

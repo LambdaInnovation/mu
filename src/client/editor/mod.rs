@@ -16,7 +16,9 @@ pub mod asset_editor;
 
 pub const DEP_IMGUI_SETUP: &str = "editor_setup";
 pub const DEP_IMGUI_TEARDOWN: &str = "editor_teardown";
+pub const MODULE_NAME: &str = "editor";
 
+const DEMO_WINDOW_TOGGLE: &str = "imgui_demo";
 static mut FRAME: Option<Ui> = None;
 
 pub fn with_frame<F>(f: F)
@@ -243,6 +245,7 @@ impl Module for EditorModule {
             |_, i| i.insert_thread_local(asset_editor::InspectorSystem)
         );
     }
+
+    fn name(&self) -> &'static str { MODULE_NAME }
 }
 
-const DEMO_WINDOW_TOGGLE: &str = "imgui_demo";

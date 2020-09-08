@@ -215,14 +215,23 @@ impl<Extras> ComponentS11n<Extras> for SpriteRenderer where Extras: DefaultExtra
 pub struct SpriteModule;
 
 impl Module for SpriteModule {
-    fn init(&self, init_context: &mut InitContext) {
-        init_context.dispatch_thread_local(
+    fn init(&self, ctx: &mut InitContext) {
+        ctx.dispatch_thread_local(
         InsertInfo::new("sprite")
                 .before(&[graphics::DEP_CAM_DRAW_TEARDOWN])
                 .after(&[graphics::DEP_CAM_DRAW_SETUP])
                 .order(graphics::render_order::OPAQUE),
             move |d, i| i.insert_thread_local(SpriteRenderSystem::new(&mut d.res_mgr, &d.world))
         );
+
+        use crate::client::editor as meditor;
+        if ctx.existing_modules.contains(meditor::MODULE_NAME) {
+            ctx.group_thread_local.dispatch(
+                InsertInfo::default()
+                    .after(&[meditor::DEP_IMGUI_SETUP])
+                    .before(&[meditor::DEP_IMGUI_TEARDOWN]),
+            |_, i| i.insert_thread_local(editor::SpriteSheetEditorSystem));
+        }
     }
 
     fn start(&self, ctx: &mut StartContext) {
@@ -514,12 +523,16 @@ pub(super) mod editor {
     use super::*;
     use std::path::PathBuf;
     use specs_derive::Component;
+    use crate::client::editor as meditor;
+    use imgui;
+    use imgui::im_str;
 
     #[derive(Component)]
     #[storage(HashMapStorage)]
-    struct SpriteSheetEditor {
-        pub sheet: ResourceRef<SpriteSheet>,
+    pub struct SpriteSheetEditor {
+        pub config: SpriteSheetConfig,
         pub path: PathBuf,
+        pub texture: ResourceRef<Texture>
     }
 
     pub struct SpriteSheetEditorSystem;
@@ -528,6 +541,15 @@ pub(super) mod editor {
         type SystemData = ReadStorage<'a, SpriteSheetEditor>;
 
         fn run(&mut self, data: Self::SystemData) {
+            // imgui::Textures::
+            meditor::with_frame(|ui| {
+                for editor in (&data).join() {
+                    imgui::Window::new(&im_str!("Sprite Editor"))
+                        .build(ui, || {
+                            // imgui::Image::new()
+                        });
+                }
+            });
         }
     }
 
