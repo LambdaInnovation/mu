@@ -67,6 +67,6 @@ pub fn set_base_asset_path(path: &'static str) {
     }
 }
 
-fn get_fs_path(path: &str) -> Box<Path> {
+pub fn get_fs_path(path: &str) -> Box<Path> {
     return Path::new(unsafe { BASE_ASSET_PATH }).join(path).into_boxed_path();
 }

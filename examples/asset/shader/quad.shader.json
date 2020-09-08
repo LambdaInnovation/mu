@@ -1,13 +1,17 @@
 {
-  "fragment": "quad.frag",
   "vertex": "quad.vert",
+  "fragment": "quad.frag",
   "uniform_layout": [
     {
       "binding": 0,
+      "name": "",
       "ty": {
         "DataBlock": {
           "members": [
-            ["wvp_matrix", "Mat4"]
+            [
+              "wvp_matrix",
+              "Mat4"
+            ]
           ]
         }
       },

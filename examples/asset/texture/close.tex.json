@@ -1,6 +1,1 @@
-{
-  "image": "close.png",
-  "sampler": {
-    "filter": "Nearest"
-  }
-}
+{"image":"close.png","sampler":{"address":"ClampToEdge","filter":"Nearest"}}

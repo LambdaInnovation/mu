@@ -46,7 +46,7 @@ impl Default for SpriteConfig {
 #[derive(Serialize, Deserialize, Default, Inspect)]
 pub struct SpriteSheetConfig {
     texture: String,
-    #[inspect(proxy_type="VecDefaultInspect<SpriteConfig>")]
+    #[inspect(proxy_type="VecDefaultInspect<_>")]
     sprites: Vec<SpriteConfig>,
     ppu: u32,
     #[serde(skip)]
@@ -413,6 +413,7 @@ impl SpriteRenderSystem {
 
                 let material = match &mut self.material {
                     Some(mat) => {
+                        mat.set("u_proj", MatProperty::Mat4(cam.wvp_matrix));
                         mat.set("u_texture", MatProperty::Texture(sheet.texture.clone()));
                         mat.set("u_sampler", MatProperty::TextureSampler(sheet.texture.clone()));
                         mat

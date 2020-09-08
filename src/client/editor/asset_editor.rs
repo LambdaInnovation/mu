@@ -9,10 +9,11 @@ use std::path::PathBuf;
 use crate::util::Color;
 use crate::client::editor::EditorUIResources;
 use imgui_inspect::*;
-use serde::{Deserialize, Serialize};
+use serde::*;
 use serde::de::DeserializeOwned;
 use std::marker::PhantomData;
-use crate::asset::load_asset;
+use crate::asset::*;
+use std::time::Instant;
 
 #[derive(Copy, Clone)]
 enum DirEntryType {
@@ -101,8 +102,8 @@ fn _walk_path(ctx: &mut AssetEditorPathRecurseContext, ui: &Ui, path: &PathBuf) 
                     .build(&ui, || {
                         if ui.is_item_clicked(MouseButton::Left) {
                             ctx.editor_info.selected = e.path_hash;
-                            ctx.inspector_info_write.current =
-                                Some(ctx.inspector_info_write.create_inspector(e.relative_path.clone()));
+                            ctx.inspector_info_write.set_current_entry(
+                                Some(ctx.inspector_info_write.create_inspector(e.relative_path.clone())));
                         }
                     });
             },
@@ -157,6 +158,7 @@ pub struct AssetInspectEntry {
 pub trait AssetInspector : Send + Sync {
 
     fn display(&mut self, ui: &Ui);
+    fn close(&self) {}
 
 }
 
@@ -174,7 +176,8 @@ struct SerializeConfigInspector<T, TInspect>
           TInspect: InspectRenderDefault<T> {
     repr: T,
     path: PathBuf,
-    marker: PhantomData<TInspect>
+    marker: PhantomData<TInspect>,
+    debounce_marker: Option<Instant>
 }
 
 impl<T, TInspect> SerializeConfigInspector<T, TInspect>
@@ -187,8 +190,26 @@ impl<T, TInspect> SerializeConfigInspector<T, TInspect>
 
         Self {
             path, repr,
-            marker: PhantomData
+            marker: PhantomData,
+            debounce_marker: None
         }
+    }
+
+}
+
+impl<T, TInspect> SerializeConfigInspector<T, TInspect>
+    where T: Send + Sync + Serialize + DeserializeOwned,
+    TInspect: InspectRenderDefault<T> + Send + Sync {
+
+    fn save(&self) {
+        let serialized_json = serde_json::to_string_pretty(&self.repr)
+            .expect("Serialize failed");
+
+        let rpath = self.path.to_str().unwrap().to_string();
+        let fs_path = get_fs_path(&rpath);
+
+        fs::write(&fs_path, serialized_json).expect("Write file failed");
+        info!("Write to {:?}", fs_path);
     }
 
 }
@@ -197,7 +218,23 @@ impl<T, TInspect> AssetInspector for SerializeConfigInspector<T, TInspect>
     where T: Send + Sync + Serialize + DeserializeOwned,
     TInspect: InspectRenderDefault<T> + Send + Sync {
     fn display(&mut self, ui: &Ui) {
-        TInspect::render_mut(&mut [&mut self.repr], "test", ui, &InspectArgsDefault::default());
+        if TInspect::render_mut(&mut [&mut self.repr], "test", ui, &InspectArgsDefault::default()) {
+            self.debounce_marker = Some(Instant::now())
+        }
+
+        if let Some(change_time) = self.debounce_marker {
+            let dt = Instant::now() - change_time;
+            if dt.as_secs_f32() > 1.0 {
+                self.debounce_marker = None;
+                self.save();
+            }
+        }
+    }
+
+    fn close(&self) {
+        if self.debounce_marker.is_some() {
+            self.save();
+        }
     }
 }
 
@@ -234,6 +271,18 @@ pub struct AssetInspectorResources {
     handlers: Vec<InspectorFactoryEntry>,
     current: Option<AssetInspectEntry>,
     // pinned: Vec<AssetInspectEntry>
+}
+
+impl AssetInspectorResources {
+
+    pub fn set_current_entry(&mut self, entry: Option<AssetInspectEntry>) {
+        if let Some(prev_entry) = self.current.take() {
+            prev_entry.inspector.close();
+        }
+
+        self.current = entry;
+    }
+
 }
 
 impl AssetInspectorResources {

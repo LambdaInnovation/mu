@@ -19,13 +19,11 @@ use std::collections::HashMap;
 use shaderc::ShaderKind;
 use std::io::Cursor;
 use imgui_inspect_derive::Inspect;
-use imgui_inspect::{InspectRenderDefault, InspectArgsDefault};
-use imgui::*;
-use std::borrow::Cow;
 use crate::client::editor::asset_editor::{AssetInspectorResources, SerializeConfigInspectorFactory};
-use strum::*;
+use crate::client::editor::inspect::*;
 use strum_macros::*;
-use std::iter::Filter;
+use imgui::*;
+use imgui_inspect::*;
 
 pub const DEP_CAM_DRAW_SETUP: &str = "cam_draw_setup";
 pub const DEP_CAM_DRAW_TEARDOWN: &str = "cam_draw_teardown";
@@ -206,12 +204,15 @@ fn clear_render_data() -> FrameRenderData {
     FRAME_RENDER_DATA.with(|ref_cell| ref_cell.borrow_mut().take().unwrap())
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
+#[derive(Inspect)]
 struct ShaderConfig {
     vertex: String,
     fragment: String,
+    #[inspect(proxy_type="VecDefaultInspect<_>")]
     uniform_layout: Vec<UniformLayoutConfig>,
     #[serde(skip)]
+    #[inspect(skip)]
     _path: String,
 }
 
@@ -316,53 +317,44 @@ pub fn load_shader_by_content(device: &wgpu::Device, vertex: &str, fragment: &st
     shader_program
 }
 
-#[derive(Serialize, Deserialize)]
-#[derive(EnumVariantNames)]
+#[derive(Serialize, Deserialize, PartialEq)]
+#[derive(EnumIter, IntoStaticStr)]
 pub enum FilterMode {
     Nearest,
     Bilinear,
     // TODO: Trilinear & mipmap
 }
 
-impl InspectRenderDefault<FilterMode> for FilterMode {
-    fn render(data: &[&FilterMode], label: &'static str, ui: &Ui, args: &InspectArgsDefault) {
-        unimplemented!()
-    }
-
-    fn render_mut(data_arr: &mut [&mut FilterMode], label: &'static str, ui: &Ui, args: &InspectArgsDefault) -> bool {
-    }
-}
-
 pub struct WgpuAddressModeInspect;
 
-impl InspectRenderDefault<wgpu::AddressMode> for WgpuAddressModeInspect {
-    fn render(data: &[&wgpu::AddressMode], label: &'static str, ui: &Ui, args: &InspectArgsDefault) {
-        unimplemented!()
-    }
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(EnumIter, IntoStaticStr)]
+pub enum AddressMode {
+    ClampToEdge,
+    Repeat,
+    MirrorRepeat,
+}
 
-    fn render_mut(data: &mut [&mut wgpu::AddressMode], label: &'static str, ui: &Ui, args: &InspectArgsDefault) -> bool {
-        let mut idx = *data[0] as usize;
-        let items = [
-            im_str!("MirrorRepeat"),
-            im_str!("Repeat"),
-            im_str!("ClampToEdge"),
-        ];
-        ComboBox::new(&im_str!("{}", label))
-            .build_simple_string(ui,
-                          &mut idx,
-                        &items);
+impl Default for AddressMode {
+    fn default() -> Self { AddressMode::ClampToEdge }
+}
 
-        // *data[0] = idx as wgpu::AddressMode;
-        // ui.
-        true
+impl Into<wgpu::AddressMode> for AddressMode {
+    fn into(self) -> wgpu::AddressMode {
+        match self {
+            AddressMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
+            AddressMode::Repeat => wgpu::AddressMode::Repeat,
+            AddressMode::MirrorRepeat => wgpu::AddressMode::MirrorRepeat
+        }
     }
 }
 
 #[derive(Serialize, Deserialize, Inspect)]
 pub struct SamplerConfig {
     #[serde(default)]
-    #[inspect(proxy_type="WgpuAddressModeInspect")]
-    pub address: wgpu::AddressMode,
+    #[inspect(proxy_type="EnumComboInspect<_>")]
+    pub address: AddressMode,
+    #[inspect(proxy_type="EnumComboInspect<_>")]
     pub filter: FilterMode
 }
 
@@ -372,10 +364,11 @@ fn create_sampler_from_config(device: &wgpu::Device, cfg: &SamplerConfig) -> wgp
         FilterMode::Bilinear => (wgpu::FilterMode::Nearest, wgpu::FilterMode::Linear, wgpu::FilterMode::Nearest),
     };
 
+    let wgpu_address = cfg.address.into();
     device.create_sampler(&wgpu::SamplerDescriptor {
-        address_mode_u: cfg.address,
-        address_mode_v: cfg.address,
-        address_mode_w: cfg.address,
+        address_mode_u: wgpu_address,
+        address_mode_v: wgpu_address,
+        address_mode_w: wgpu_address,
         min_filter, mag_filter, mipmap_filter,
         lod_min_clamp: 0.,
         lod_max_clamp: 0.,
@@ -479,16 +472,49 @@ pub fn create_texture(wgpu_state: &WgpuState, rgba_bytes: Vec<u8>, dims: (u32, u
 pub type UniformMat4 = [f32; 16];
 pub type UniformMat3 = [f32; 9];
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(EnumIter, IntoStaticStr)]
 pub enum UniformPropertyType {
     Float, Vec2, Vec3, Mat4
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+impl Default for UniformPropertyType {
+    fn default() -> Self {
+        Self::Float
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct UniformPropertyBinding (
     pub String,
     pub UniformPropertyType
 );
+
+impl InspectRenderDefault<UniformPropertyBinding> for UniformPropertyBinding {
+    fn render(_: &[&UniformPropertyBinding], _: &'static str, _: &Ui, _: &InspectArgsDefault) {
+        unimplemented!()
+    }
+
+    fn render_mut(data: &mut [&mut UniformPropertyBinding], label: &'static str, ui: &Ui, _args: &InspectArgsDefault) -> bool {
+        let mut changed = false;
+
+        let binding = &mut data[0];
+        let mut name = im_str!("{}", binding.0);
+
+        ui.columns(2, &im_str!("{}", label), false);
+        if ui.input_text(im_str!("id"), &mut name).build() {
+            changed = true;
+            binding.0 = name.to_string();
+        }
+        ui.next_column();
+
+        changed |= EnumComboInspect::render_mut(&mut [&mut binding.1], "type", ui, &Default::default());
+        ui.next_column();
+        ui.columns(1, im_str!(""), false);
+
+        changed
+    }
+}
 
 pub enum UniformProperty {
     Float(f32),
@@ -518,19 +544,75 @@ pub enum UniformBindingType {
     DataBlock { members: Vec<UniformPropertyBinding> }
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+impl Default for UniformBindingType {
+    fn default() -> Self {
+        Self::Texture
+    }
+}
+
+impl InspectRenderDefault<UniformBindingType> for UniformBindingType {
+    fn render(_: &[&UniformBindingType], _: &'static str, _: &Ui, _args: &InspectArgsDefault) {
+        unimplemented!()
+    }
+
+    fn render_mut(data: &mut [&mut UniformBindingType], label: &'static str, ui: &Ui, _args: &InspectArgsDefault) -> bool {
+        let item = &mut data[0];
+
+        let mut ix = match item {
+            UniformBindingType::Texture => 0,
+            UniformBindingType::Sampler => 1,
+            UniformBindingType::DataBlock { .. } => 2
+        };
+
+        let names = [
+            im_str!("Texture"),
+            im_str!("Sampler"),
+            im_str!("DataBlock")
+        ];
+
+        if ComboBox::new(&im_str!("{}", label))
+            .build_simple_string(ui, &mut ix, &names) {
+            let new_item = match ix {
+                0 => UniformBindingType::Texture,
+                1 => UniformBindingType::Sampler,
+                2 => UniformBindingType::DataBlock { members: Default::default() },
+                _ => panic!("Invalid idx"),
+            };
+            **item = new_item;
+
+            return true
+        }
+
+        if let UniformBindingType::DataBlock { members } = item {
+            return VecDefaultInspect::<_>::render_mut(&mut [members], "Members", ui, &Default::default());
+        }
+
+        false
+    }
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(EnumIter, IntoStaticStr)]
 pub enum UniformVisibility {
     Vertex,
     Fragment,
     All
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+impl Default for UniformVisibility {
+    fn default() -> Self {
+        Self::Vertex
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+#[derive(Inspect)]
 pub struct UniformLayoutConfig {
     pub binding: u32,
     #[serde(default)]
     pub name: String,
     pub ty: UniformBindingType,
+    #[inspect(proxy_type="EnumComboInspect<_>")]
     pub visibility: UniformVisibility
 }
 
@@ -859,7 +941,8 @@ impl Module for GraphicsModule {
 
     fn start(&self, ctx: &mut crate::StartContext) {
         if let Some(mut res) = ctx.world.try_fetch_mut::<AssetInspectorResources>() {
-            res.add_factory(".tex.json", SerializeConfigInspectorFactory::<TextureConfig>::new())
+            res.add_factory(".tex.json", SerializeConfigInspectorFactory::<TextureConfig>::new());
+            res.add_factory(".shader.json", SerializeConfigInspectorFactory::<ShaderConfig>::new());
         }
     }
 }

@@ -1,6 +1,7 @@
 {
   "image": "landscape.png",
   "sampler": {
+    "address": "ClampToEdge",
     "filter": "Bilinear"
   }
 }

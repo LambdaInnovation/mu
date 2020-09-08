@@ -862,7 +862,7 @@ mod internal {
 
             let white_texture = res_mgr.add(graphics::create_texture(
                 wgpu_state, vec![255, 255, 255, 255], (1, 1), &SamplerConfig {
-                    address: wgpu::AddressMode::ClampToEdge,
+                    address: AddressMode::ClampToEdge,
                     filter: FilterMode::Nearest
                 }));
 
