@@ -15,6 +15,7 @@ impl Module for MyModule {
     fn init(&self, ctx: &mut InitContext) {
         let mut fonts = HashMap::new();
         fonts.insert("Default".to_string(), load_asset::<FontArc>("Inconsolata-Regular.ttf").unwrap());
+        fonts.insert("Chn".to_string(), load_asset::<FontArc>("SourceHanSansSC-Normal.otf").unwrap());
         ctx.init_data.world.insert(FontInitData {
             fonts
         });
@@ -35,7 +36,19 @@ impl Module for MyModule {
                 text: "Now I am become death, the destroyer of worlds".to_string(),
                 sz: 0.1,
                 color: Color::white(),
-                layout: Layout::default().h_align(HorizontalAlign::Left).v_align(VerticalAlign::Center)
+                layout: Layout::default().h_align(HorizontalAlign::Center).v_align(VerticalAlign::Center),
+                font: "Default".to_string()
+            })
+            .build();
+
+        start_data.world.create_entity()
+            .with(Transform::new().pos(vec3(0., -0.5, 0.)))
+            .with(WorldText {
+                text: "道可道非常道名可名非常名".to_string(),
+                sz: 0.15,
+                color: Color::white(),
+                layout: Layout::default().h_align(HorizontalAlign::Center).v_align(VerticalAlign::Center),
+                font: "Chn".to_string()
             })
             .build();
     }

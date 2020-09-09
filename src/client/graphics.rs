@@ -177,6 +177,9 @@ impl CamRenderData {
 
 pub struct FrameRenderData {
     pub camera_infos: Vec<CamRenderData>,
+    /// A `StagingBelt` currently used for text rendering. Will be finished before all
+    /// camera submission and recalled after that.
+    pub staging_belt: wgpu::util::StagingBelt
 }
 
 thread_local!(
@@ -823,10 +826,22 @@ impl Material {
 
 mod internal {
     use super::*;
+    use futures::executor::*;
+    use futures::task::{SpawnExt, LocalSpawnExt};
 
     pub struct SysRenderPrepare {}
 
-    pub struct SysRenderTeardown {}
+    pub struct SysRenderTeardown {
+        local_pool: LocalPool
+    }
+
+    impl SysRenderTeardown {
+        pub fn new() -> Self {
+            Self {
+                local_pool: LocalPool::new()
+            }
+        }
+    }
 
     impl<'a> System<'a> for SysRenderPrepare {
         type SystemData = (ReadExpect<'a, WindowInfo>, ReadExpect<'a, WgpuState>,
@@ -896,7 +911,9 @@ mod internal {
             }
 
             init_render_data(FrameRenderData {
-                camera_infos: result_vec
+                camera_infos: result_vec,
+                // FIXME: Currently allocates every frame, but actually this can be reused?
+                staging_belt: wgpu::util::StagingBelt::new(1024)
             })
         }
     }
@@ -905,12 +922,17 @@ mod internal {
         type SystemData = ReadExpect<'a, WgpuState>;
 
         fn run(&mut self, wgpu_state: Self::SystemData) {
-            let result = clear_render_data();
+            let mut result = clear_render_data();
+            result.staging_belt.finish();
             wgpu_state.queue.submit(
                 result.camera_infos
                     .into_iter()
                     .map(|x| x.encoder.finish())
-                    .collect::<Vec<_>>())
+                    .collect::<Vec<_>>());
+
+            let spawner = self.local_pool.spawner();
+            spawner.spawn_local(result.staging_belt.recall())
+                .expect("Recall staging belt");
         }
     }
 }
@@ -930,7 +952,7 @@ impl Module for GraphicsModule {
         }
         init_data.dispatch_thread_local(
             InsertInfo::new(DEP_CAM_DRAW_TEARDOWN).after(&[DEP_CAM_DRAW_SETUP]),
-            |_, i| i.insert_thread_local(internal::SysRenderTeardown {}),
+            |_, i| i.insert_thread_local(internal::SysRenderTeardown::new()),
         );
     }
 

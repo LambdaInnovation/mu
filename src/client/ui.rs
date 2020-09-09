@@ -329,6 +329,8 @@ mod internal {
     use std::collections::HashMap;
     use crate::client::text::FontRuntimeData;
     use wgpu::util::DeviceExt;
+    use futures::executor::LocalPool;
+    use futures::task::LocalSpawnExt;
 
     // #[derive(Default)]
     pub struct WidgetRuntimeInfo {
@@ -926,6 +928,7 @@ mod internal {
     pub struct UIRenderSystem {
         image_data: UIImageRenderData,
         text_staging_belt: wgpu::util::StagingBelt,
+        local_pool: LocalPool
     }
 
     impl UIRenderSystem {
@@ -936,6 +939,7 @@ mod internal {
             Self {
                 image_data,
                 text_staging_belt: wgpu::util::StagingBelt::new(1024),
+                local_pool: LocalPool::new()
             }
         }
 
@@ -1029,7 +1033,9 @@ mod internal {
 
             self.text_staging_belt.finish();
             wgpu_state.queue.submit(Some(encoder.finish()));
-            futures::executor::block_on(self.text_staging_belt.recall());
+
+            let spawner = self.local_pool.spawner();
+            spawner.spawn_local(self.text_staging_belt.recall());
         }
     }
 }

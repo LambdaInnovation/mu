@@ -38,6 +38,7 @@ pub struct WorldText {
     pub color: Color,
     pub layout: Layout<BuiltInLineBreaker>,
     pub sz: f32,
+    pub font: String
 }
 
 impl Component for WorldText {
@@ -48,16 +49,12 @@ impl Component for WorldText {
 mod internal {
     use super::*;
 
-    pub struct WorldTextRenderSystem {
-        staging_belt: wgpu::util::StagingBelt
-    }
+    pub struct WorldTextRenderSystem {}
 
     impl WorldTextRenderSystem {
 
         pub fn new() -> Self {
-            Self {
-                staging_belt: wgpu::util::StagingBelt::new(1024)
-            }
+            Self {}
         }
 
     }
@@ -66,22 +63,19 @@ mod internal {
         type SystemData = (ReadExpect<'a, WgpuState>, WriteExpect<'a, FontRuntimeData>, ReadStorage<'a, WorldText>, ReadStorage<'a, Transform>);
 
         fn run(&mut self, (wgpu_state, mut font_data, world_text_read, transform_read): Self::SystemData) {
-            let ref mut glyph_brush = font_data.glyph_brush;
-
-            // Recall the staging belt
-            info!("Staging belt recall");
-            futures::executor::block_on(self.staging_belt.recall());
-            info!("Staging belt recall finish");
+            let font_data_ref = &mut *font_data;
 
             with_render_data(|rd| {
                 for cam in &mut rd.camera_infos {
                     for (text, trans) in (&world_text_read, &transform_read).join() {
                         let size_scl = 48.; // TOOD: 估算相机中字符大小 并正确设置px
-                        glyph_brush.queue(Section {
+                        let font_id = font_data_ref.fonts[&text.font];
+                        font_data_ref.glyph_brush.queue(Section {
                             screen_position: (0.0, 0.0),
                             text: vec![Text::new(&text.text)
                                 .with_scale(size_scl)
-                                .with_color(text.color)],
+                                .with_color(text.color)
+                                .with_font_id(font_id)],
                             layout: text.layout,
                             .. Section::default()
                         });
@@ -90,15 +84,12 @@ mod internal {
                         let scl_mat = Mat4::from_nonuniform_scale(scl, -scl, 1.);
                         let wvp_mat = cam.wvp_matrix * trans.get_world_view() * scl_mat;
 
-                        glyph_brush.draw_queued_with_transform(&wgpu_state.device, &mut self.staging_belt, &mut cam.encoder,
+                        font_data_ref.glyph_brush.draw_queued_with_transform(&wgpu_state.device, &mut rd.staging_belt, &mut cam.encoder,
                            &wgpu_state.frame_texture.as_ref().unwrap().output.view, mat::to_array(wvp_mat))
                             .unwrap();
                     }
                 }
             });
-
-            info!("Staging belt finish");
-            self.staging_belt.finish();
         }
     }
 
