@@ -39,7 +39,7 @@ pub fn get_asset_path_local(base_dir: &str, path: &str) -> String {
     if base_dir.is_empty() {
         String::from(path)
     } else {
-        format!("{ }/{}", base_dir, path)
+        format!("{}/{}", base_dir, path)
     }
 }
 

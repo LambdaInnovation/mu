@@ -39,22 +39,26 @@ pub struct ToggleViewEntry {
     pub display_name: String,
 }
 
-pub(crate) struct EditorUIResources {
+pub struct EditorUIResources {
     pub show_ui: bool,
     pub demo_window_opened: bool,
     pub all_toggle_views: Vec<ToggleViewEntry>,
+    pub renderer: Renderer,
     // TODO: Serialize settings
     pub all_opened_views: HashSet<String>,
 }
 
 impl EditorUIResources {
 
-    pub fn new() -> Self {
+    pub fn new(context: &mut imgui::Context, ws: &WgpuState) -> Self {
+        let renderer =
+            Renderer::new(context, &ws.device, &ws.queue, ws.sc_desc.format);
         Self {
             show_ui: true,
             demo_window_opened: false,
             all_opened_views: HashSet::new(),
             all_toggle_views: vec![],
+            renderer
         }
     }
 
@@ -148,23 +152,18 @@ impl<'a> System<'a> for EditorUISetupSystem {
 }
 
 struct EditorUITeardownSystem {
-    renderer: Renderer,
 }
 
 impl EditorUITeardownSystem {
-    pub fn new(context: &mut imgui::Context, wgpu_state: &WgpuState) -> EditorUITeardownSystem {
-        let renderer =
-            Renderer::new(context, &wgpu_state.device, &wgpu_state.queue, wgpu_state.sc_desc.format);
-        Self {
-            renderer,
-        }
+    pub fn new() -> EditorUITeardownSystem {
+        Self {}
     }
 }
 
 impl<'a> System<'a> for EditorUITeardownSystem {
-    type SystemData = ReadExpect<'a, WgpuState>;
+    type SystemData = (ReadExpect<'a, WgpuState>, WriteExpect<'a, EditorUIResources>);
 
-    fn run(&mut self, wgpu_state: Self::SystemData) {
+    fn run(&mut self, (wgpu_state, mut ui_res): Self::SystemData) {
         let ui_opt = unsafe { FRAME.take() };
         match ui_opt {
             Some(ui) => {
@@ -187,7 +186,7 @@ impl<'a> System<'a> for EditorUITeardownSystem {
                     depth_stencil_attachment: None
                 });
 
-                self.renderer
+                ui_res.renderer
                     .render(&draw_data, &wgpu_state.queue, &wgpu_state.device, &mut rpass)
                     .expect("Rendering imgui failed");
 
@@ -220,13 +219,12 @@ impl Module for EditorModule {
 
         ctx.io_mut().font_global_scale = (1.0 / hidpi_factor) as f32;
 
-        let mut ui_res = EditorUIResources::new();
+        let mut ui_res = EditorUIResources::new(&mut ctx, &*init_ctx.init_data.world.read_resource());
         ui_res.push_view_toggle(DEMO_WINDOW_TOGGLE, "IMGUI Demo");
 
         {
             let insert_info = InsertInfo::new(DEP_IMGUI_TEARDOWN).after(&[DEP_IMGUI_SETUP]);
-            let sys = EditorUITeardownSystem::new(&mut ctx,
-                                                  &*init_ctx.init_data.world.read_resource());
+            let sys = EditorUITeardownSystem::new();
             init_ctx.group_thread_local.dispatch(
                 insert_info,
                 move |_, i| i.insert_thread_local(sys)
@@ -246,18 +244,20 @@ impl Module for EditorModule {
             ui_res.push_view_toggle(asset_editor::VIEW_TOGGLE_ID, "Assets");
             ui_res.all_opened_views.insert(asset_editor::VIEW_TOGGLE_ID.to_string());
 
+            init_ctx.init_data.world.insert(asset_editor::AssetEditorEvents::new());
             init_ctx.init_data.world.insert(asset_editor::AssetEditorResource::new(&asset_path));
             init_ctx.group_thread_local.dispatch(
                 InsertInfo::default().after(&[DEP_IMGUI_SETUP]).before(&[DEP_IMGUI_TEARDOWN]),
                 |_, i| i.insert_thread_local(asset_editor::AssetEditorSystem {})
             );
+
+            init_ctx.init_data.world.insert(asset_editor::AssetInspectorResources::new());
+            init_ctx.group_thread_local.dispatch(
+                InsertInfo::default().before(&[DEP_IMGUI_TEARDOWN]).after(&[DEP_IMGUI_SETUP]),
+                |_, i| i.insert_thread_local(asset_editor::InspectorSystem)
+            );
         }
 
-        init_ctx.init_data.world.insert(asset_editor::AssetInspectorResources::new());
-        init_ctx.group_thread_local.dispatch(
-            InsertInfo::default().before(&[DEP_IMGUI_TEARDOWN]).after(&[DEP_IMGUI_SETUP]),
-            |_, i| i.insert_thread_local(asset_editor::InspectorSystem)
-        );
 
         init_ctx.init_data.world.insert(ui_res);
     }

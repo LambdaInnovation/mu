@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use image::GenericImageView;
+use image::{GenericImageView, DynamicImage};
 use serde::{Serialize, Deserialize};
 use serde_json;
 use specs::prelude::*;
@@ -386,7 +386,7 @@ fn create_sampler_from_config(device: &wgpu::Device, cfg: &SamplerConfig) -> wgp
 }
 
 #[derive(Serialize, Deserialize, Inspect)]
-struct TextureConfig {
+pub struct TextureConfig {
     image: String,
     sampler: SamplerConfig,
     #[serde(skip)]
@@ -410,6 +410,14 @@ pub struct Texture {
     pub raw_texture: wgpu::Texture,
     pub default_view: wgpu::TextureView,
     pub sampler: wgpu::Sampler
+}
+
+pub fn load_texture_raw(path: &str) -> (TextureConfig, DynamicImage) {
+    let config: TextureConfig = load_asset(path).unwrap();
+    let img_bytes: Vec<u8> = load_asset_local(&config._path, &config.image).unwrap();
+    let img = image::load_from_memory_with_format(&img_bytes,
+                                                  image::ImageFormat::Png).unwrap();
+    (config, img)
 }
 
 pub fn load_texture(wgpu_state: &WgpuState, path: &str) -> Texture {

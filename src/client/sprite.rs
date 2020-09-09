@@ -19,7 +19,7 @@ use crate::proto_default::DefaultExtras;
 use serde_json::Value;
 use imgui_inspect_derive::Inspect;
 use super::editor::inspect::*;
-use crate::client::editor::asset_editor::{AssetInspectorResources, SerializeConfigInspectorFactory};
+use crate::client::editor::asset_editor::{AssetInspectorResources};
 use wgpu::util::DeviceExt;
 
 #[derive(Serialize, Clone, Deserialize, Inspect)]
@@ -237,7 +237,7 @@ impl Module for SpriteModule {
 
     fn start(&self, ctx: &mut StartContext) {
         if let Some(mut res) = ctx.world.try_fetch_mut::<AssetInspectorResources>() {
-            res.add_factory(".sheet.json", SerializeConfigInspectorFactory::<SpriteSheetConfig>::new())
+            res.add_factory(".sheet.json", editor::SpriteSheetConfigInspectorFactory {});
         }
     }
 }
@@ -538,31 +538,112 @@ pub(super) mod editor {
     use specs_derive::Component;
     use crate::client::editor as meditor;
     use imgui;
-    use imgui::im_str;
+    use imgui::{im_str};
+    use crate::client::editor::asset_editor::*;
+    use crate::client::editor::EditorUIResources;
+    use image::GenericImageView;
 
     #[derive(Component)]
     #[storage(HashMapStorage)]
     pub struct SpriteSheetEditor {
-        pub config: SpriteSheetConfig,
-        pub path: PathBuf,
-        pub texture: ResourceRef<Texture>
+        config: SpriteSheetConfig,
+        path: PathBuf,
+        texture_id: imgui::TextureId,
+        activated: bool
+    }
+
+    #[derive(Clone)]
+    pub struct SpriteSheetEditRequest(PathBuf);
+
+    impl SpriteSheetEditor {
+        // fn create(path: PathBuf, ui_res: &mut EditorUIResources) -> SpriteSheetEditor {
+        // }
     }
 
     pub struct SpriteSheetEditorSystem;
 
     impl<'a> System<'a> for SpriteSheetEditorSystem {
-        type SystemData = ReadStorage<'a, SpriteSheetEditor>;
+        type SystemData = (
+            WriteStorage<'a, SpriteSheetEditor>,
+            WriteExpect<'a, EditorUIResources>,
+            WriteExpect<'a, AssetEditorEvents>,
+            ReadExpect<'a, WgpuState>,
+            Entities<'a>);
 
-        fn run(&mut self, data: Self::SystemData) {
-            // imgui::Textures::
+        fn run(&mut self, (mut editors, mut ui_res, events, wgpu_state, entities): Self::SystemData) {
+            let mut requests: Vec<SpriteSheetEditRequest> = events.iter()
+                .filter_map(|x| match x {
+                    AssetEditorEvent::Custom(b) => b.downcast_ref::<SpriteSheetEditRequest>().map(|x| (*x).clone())
+                })
+                .collect();
+
             meditor::with_frame(|ui| {
-                for editor in (&data).join() {
+                for editor in (&mut editors).join() {
+                    // Remove already-have requests, active associated windows
+                    if let Some((idx, _)) = requests.iter().enumerate()
+                        .find(|(_, x)| x.0 == editor.path) {
+                        editor.activated = true;
+                        requests.remove(idx);
+                    }
+
                     imgui::Window::new(&im_str!("Sprite Editor"))
                         .build(ui, || {
                             // imgui::Image::new()
                         });
                 }
             });
+
+            // Handle all new edit requests
+            requests.drain(..)
+                .for_each(|SpriteSheetEditRequest(path)| {
+                    // TODO: Replace is VERY temporary
+                    let config: SpriteSheetConfig = load_asset(&path.to_str().unwrap().replace("\\", "/")).unwrap();
+                    let (_, image) = load_texture_raw(&get_asset_path_local(&config._path, &config.texture));
+                    let (w, h) = (image.width(), image.height());
+                    let texture_id = ui_res.renderer.upload_texture(&wgpu_state.device, &wgpu_state.queue, &image.into_rgba().into_vec(), w, h, None);
+                    // let tex_config = load_as
+                    let cmpt = SpriteSheetEditor {
+                        config,
+                        path: path,
+                        texture_id,
+                        activated: true
+                    };
+
+                    let ent = entities.create();
+                    editors.insert(ent, cmpt).unwrap();
+                });
+        }
+    }
+
+    struct SpriteSheetConfigInspector {
+        path: PathBuf,
+        default_inspector: SerializeConfigInspector<SpriteSheetConfig>
+    }
+
+    impl AssetInspector for SpriteSheetConfigInspector {
+        fn display(&mut self, ctx: AssetInspectContext) {
+            if ctx.ui.button(im_str!("Edit"), [50., 25.]) {
+                ctx.events.push(AssetEditorEvent::Custom(
+                    Box::new(SpriteSheetEditRequest(self.path.clone())))
+                );
+            }
+
+            self.default_inspector.display(ctx);
+        }
+
+        fn close(&self) {
+            self.default_inspector.close();
+        }
+    }
+
+    pub struct SpriteSheetConfigInspectorFactory {}
+
+    impl AssetInspectorFactory for SpriteSheetConfigInspectorFactory {
+        fn create(&self, path: PathBuf) -> Box<dyn AssetInspector> {
+            Box::new(SpriteSheetConfigInspector {
+                path: path.clone(),
+                default_inspector: SerializeConfigInspector::load(path),
+            })
         }
     }
 

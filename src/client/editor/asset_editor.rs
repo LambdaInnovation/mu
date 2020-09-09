@@ -14,6 +14,7 @@ use serde::de::DeserializeOwned;
 use std::marker::PhantomData;
 use crate::asset::*;
 use std::time::Instant;
+use std::any::Any;
 
 #[derive(Copy, Clone)]
 enum DirEntryType {
@@ -34,6 +35,13 @@ pub(crate) struct AssetEditorResource {
     selected: u64,
     fs_path_cache: HashMap<PathBuf, Vec<CachedDirEntry>>
 }
+
+/// used to communicate between unrelated systems.
+pub enum AssetEditorEvent {
+    Custom(Box<dyn Send+Sync+Any>)
+}
+
+pub type AssetEditorEvents = Vec<AssetEditorEvent>;
 
 impl AssetEditorResource {
 
@@ -124,23 +132,24 @@ fn _walk_path(ctx: &mut AssetEditorPathRecurseContext, ui: &Ui, path: &PathBuf) 
 impl<'a> System<'a> for AssetEditorSystem {
     type SystemData = (ReadExpect<'a, EditorUIResources>,
                        WriteExpect<'a, AssetEditorResource>,
-                       WriteExpect<'a, AssetInspectorResources>);
+                       WriteExpect<'a, AssetInspectorResources>,
+                        WriteExpect<'a, AssetEditorEvents>);
 
-    fn run(&mut self, (editor_res, mut info, mut inspector_data): Self::SystemData) {
-        if !editor_res.all_opened_views.contains(VIEW_TOGGLE_ID) {
-            return
+    fn run(&mut self, (editor_res, mut info, mut inspector_data, mut events): Self::SystemData) {
+        if editor_res.all_opened_views.contains(VIEW_TOGGLE_ID) {
+            with_frame(|ui| {
+                Window::new(im_str!("Assets")).build(ui, || {
+                    let base_path = info.base_path.clone();
+                    let mut ctx = AssetEditorPathRecurseContext {
+                        editor_info: &mut *info,
+                        inspector_info_write: &mut *inspector_data
+                    };
+                    _walk_path(&mut ctx, ui, &base_path);
+                });
+            });
         }
 
-        with_frame(|ui| {
-            Window::new(im_str!("Assets")).build(ui, || {
-                let base_path = info.base_path.clone();
-                let mut ctx = AssetEditorPathRecurseContext {
-                    editor_info: &mut *info,
-                    inspector_info_write: &mut *inspector_data
-                };
-                _walk_path(&mut ctx, ui, &base_path);
-            });
-        });
+        events.clear();
     }
 }
 
@@ -154,9 +163,14 @@ pub struct AssetInspectEntry {
     just_opened: bool,
 }
 
+pub struct AssetInspectContext<'a, 'ui> {
+    pub ui: &'a Ui<'ui>,
+    pub events: &'a mut AssetEditorEvents
+}
+
 pub trait AssetInspector : Send + Sync {
 
-    fn display(&mut self, ui: &Ui);
+    fn display(&mut self, ui: AssetInspectContext);
     fn close(&self) {}
 
 }
@@ -165,12 +179,12 @@ struct DefaultInspector {
 }
 
 impl AssetInspector for DefaultInspector {
-    fn display(&mut self, ui: &Ui) {
-        ui.text("Unsupported format");
+    fn display(&mut self, ctx: AssetInspectContext) {
+        ctx.ui.text("Unsupported format");
     }
 }
 
-struct SerializeConfigInspector<T, TInspect>
+pub struct SerializeConfigInspector<T, TInspect = T>
     where T: Send + Sync + Serialize + DeserializeOwned,
           TInspect: InspectRenderDefault<T> {
     repr: T,
@@ -216,8 +230,8 @@ impl<T, TInspect> SerializeConfigInspector<T, TInspect>
 impl<T, TInspect> AssetInspector for SerializeConfigInspector<T, TInspect>
     where T: Send + Sync + Serialize + DeserializeOwned,
     TInspect: InspectRenderDefault<T> + Send + Sync {
-    fn display(&mut self, ui: &Ui) {
-        if TInspect::render_mut(&mut [&mut self.repr], "test", ui, &InspectArgsDefault::default()) {
+    fn display(&mut self, ctx: AssetInspectContext) {
+        if TInspect::render_mut(&mut [&mut self.repr], "test", &ctx.ui, &InspectArgsDefault::default()) {
             self.debounce_marker = Some(Instant::now())
         }
 
@@ -327,7 +341,7 @@ impl AssetInspectorResources {
 
 pub(crate) struct InspectorSystem;
 
-fn _show_inspector(ui: &Ui, item: &mut AssetInspectEntry) {
+fn _show_inspector(ui: &Ui, events: &mut AssetEditorEvents, item: &mut AssetInspectEntry) {
     let mut window =
         Window::new(im_str!("Asset Inspector"))
             .size([300., 400.], Condition::FirstUseEver);
@@ -341,20 +355,25 @@ fn _show_inspector(ui: &Ui, item: &mut AssetInspectEntry) {
         .build(ui, || {
             let title = item.path.to_str().unwrap();
             ui.text_colored(Color::mono(0.8).into(), title);
-            item.inspector.display(ui);
+
+            let ctx = AssetInspectContext {
+                ui,
+                events
+            };
+            item.inspector.display(ctx);
         });
 }
 
 impl<'a> System<'a> for InspectorSystem {
-    type SystemData = (ReadExpect<'a, EditorUIResources>, WriteExpect<'a, AssetInspectorResources>);
+    type SystemData = (ReadExpect<'a, EditorUIResources>, WriteExpect<'a, AssetEditorEvents>, WriteExpect<'a, AssetInspectorResources>);
 
-    fn run(&mut self, (editor_res, mut data): Self::SystemData) {
+    fn run(&mut self, (editor_res, mut events, mut data): Self::SystemData) {
         if !editor_res.all_opened_views.contains(VIEW_TOGGLE_ID) {
             return
         }
         super::with_frame(|ui| {
             if let Some(current) = &mut data.current {
-                _show_inspector(ui, current);
+                _show_inspector(ui, &mut *events, current);
             }
         });
     }
