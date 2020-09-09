@@ -7,6 +7,7 @@ use mu::util::Color;
 use mu::client::input::RawInputData;
 use winit::event::VirtualKeyCode;
 use wgpu::BufferAddress;
+use wgpu::util::DeviceExt;
 
 #[derive(Copy, Clone)]
 struct QuadVertex {
@@ -46,35 +47,40 @@ impl DrawQuadSystem {
             QuadVertex::new(0.5, 0.5, 1., 0.)
         ];
 
-        let texture_view = texture.raw_texture.create_default_view();
+        let texture_view = texture.raw_texture.create_view(&Default::default());
 
-        let vbo = wgpu_state.device.create_buffer_with_data(bytemuck::cast_slice(&quad),
-                                                            wgpu::BufferUsage::VERTEX);
-        let ibo = wgpu_state.device.create_buffer_with_data(
-            bytemuck::cast_slice(&[0u16, 1, 2, 0, 2, 3]),
-            wgpu::BufferUsage::INDEX
+        let vbo = wgpu_state.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&quad),
+            usage: wgpu::BufferUsage::VERTEX
+        });
+        let ibo = wgpu_state.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&[0u16, 1, 2, 0, 2, 3]),
+           usage: wgpu::BufferUsage::INDEX
+        });
+
+        let ubo = wgpu_state.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(&[0.0f32; 16]),
+                usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST
+            }
         );
 
-        let ubo = wgpu_state.device.create_buffer_with_data(
-            bytemuck::cast_slice(&[0.0f32; 16]),
-            wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST
-        );
-
+        let ubo_range = 0..std::mem::size_of::<[f32;16]>() as wgpu::BufferAddress;
         let bind_group = wgpu_state.device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &program.bind_group_layout,
-            bindings: &[
-                wgpu::Binding {
+            entries: &[
+                wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &ubo,
-                        range: 0..std::mem::size_of::<[f32;16]>() as wgpu::BufferAddress
-                    }
+                    resource: wgpu::BindingResource::Buffer(ubo.slice(ubo_range))
                 },
-                wgpu::Binding {
+                wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(&texture_view)
                 },
-                wgpu::Binding {
+                wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&texture.sampler)
                 },
@@ -83,11 +89,14 @@ impl DrawQuadSystem {
         });
 
         let pipeline_layout = wgpu_state.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
             bind_group_layouts: &[&program.bind_group_layout],
+            push_constant_ranges: &[]
         });
 
         let pipeline = wgpu_state.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            layout: &pipeline_layout,
+            label: None,
+            layout: Some(&pipeline_layout),
             vertex_stage: wgpu::ProgrammableStageDescriptor { module: &program.vertex, entry_point: "main" },
             fragment_stage: Some(wgpu::ProgrammableStageDescriptor { module: &program.fragment, entry_point: "main" }),
             rasterization_state: None,
@@ -128,9 +137,12 @@ impl<'a> System<'a> for DrawQuadSystem {
             let cam_infos = &mut r.camera_infos;
             for cam_info in cam_infos {
                 let wvp_mat_arr: [f32; 16] = math::mat::to_array(cam_info.wvp_matrix);
-                let tmp_mat_buf = wgpu_state.device.create_buffer_with_data(
-                    bytemuck::cast_slice(&wvp_mat_arr),
-                    wgpu::BufferUsage::COPY_SRC
+                let tmp_mat_buf = wgpu_state.device.create_buffer_init(
+                    &wgpu::util::BufferInitDescriptor {
+                        label: None,
+                        contents: bytemuck::cast_slice(&wvp_mat_arr),
+                        usage: wgpu::BufferUsage::COPY_SRC
+                    }
                 );
                 cam_info.encoder.copy_buffer_to_buffer(&tmp_mat_buf, 0,
                     &self.ubo, 0, mem::size_of::<[f32; 16]>() as BufferAddress);
@@ -139,8 +151,8 @@ impl<'a> System<'a> for DrawQuadSystem {
                     let mut render_pass = cam_info.render_pass(&*wgpu_state);
                     render_pass.set_pipeline(&self.pipeline);
                     render_pass.set_bind_group(0, &self.bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, &self.vbo, 0, 0);
-                    render_pass.set_index_buffer(&self.ibo, 0, 0);
+                    render_pass.set_vertex_buffer(0, self.vbo.slice(..));
+                    render_pass.set_index_buffer(self.ibo.slice(..));
                     render_pass.draw_indexed(0..6, 0, 0..1);
                 }
             }

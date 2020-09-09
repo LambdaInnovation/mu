@@ -434,36 +434,20 @@ pub fn create_texture(wgpu_state: &WgpuState, rgba_bytes: Vec<u8>, dims: (u32, u
         label: Some("texture")
     });
 
-    let buffer = wgpu_state.device.create_buffer_init(
-        &wgpu::util::BufferInitDescriptor {
-            label: None,
-            contents: &rgba_bytes,
-            usage: wgpu::BufferUsage::COPY_SRC
-        }
-    );
-
-    let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("texture_upload_encoder")
-    });
-
-    encoder.copy_buffer_to_texture(
-        wgpu::BufferCopyView {
-            buffer: &buffer,
-            layout: wgpu::TextureDataLayout {
-                offset: 0,
-                bytes_per_row: 4 * dims.0,
-                rows_per_image: dims.1
-            }
-        },
+    wgpu_state.queue.write_texture(
         wgpu::TextureCopyView {
             texture: &raw_texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO
         },
+        &rgba_bytes,
+        wgpu::TextureDataLayout {
+            offset: 0,
+            bytes_per_row: 4 * dims.0,
+            rows_per_image: dims.1
+        },
         extent
     );
-
-    wgpu_state.queue.submit(Some(encoder.finish()));
 
     let default_view = raw_texture.create_view(&Default::default());
     let sampler = create_sampler_from_config(&wgpu_state.device, sampler_cfg);

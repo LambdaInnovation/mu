@@ -5,6 +5,7 @@ use specs::{ReadExpect};
 use mu::ecs::Time;
 use mu::client::graphics;
 use mu::util::Color;
+use wgpu::util::DeviceExt;
 
 #[derive(Copy, Clone)]
 struct TriangleVertex {
@@ -52,41 +53,51 @@ impl DrawTriangleSystem {
         let indices = [0u16, 1, 2];
 
         let (vbo, ibo, ubo, pipeline, bindgroup) = {
-            let vbo = wgpu_state.device.create_buffer_with_data(
-                bytemuck::cast_slice(&triangle),
-                wgpu::BufferUsage::VERTEX
+            let vbo = wgpu_state.device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: None,
+                    contents: bytemuck::cast_slice( & triangle),
+                    usage: wgpu::BufferUsage::VERTEX
+                }
             );
 
-            let ibo = wgpu_state.device.create_buffer_with_data(
-                bytemuck::cast_slice(&indices),
-                wgpu::BufferUsage::INDEX
+            let ibo = wgpu_state.device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: None,
+                    contents: bytemuck::cast_slice(&indices),
+                    usage: wgpu::BufferUsage::INDEX
+                }
             );
 
-            let ubo = wgpu_state.device.create_buffer_with_data(
-                bytemuck::cast_slice(&[TriangleUniform { offset: [0., 0., 0.] }]),
-                wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST
+            let ubo = wgpu_state.device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: None,
+                    contents: bytemuck::cast_slice(&[TriangleUniform { offset: [0., 0., 0.] }]),
+                    usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST
+                }
             );
 
+            let range = 0..std::mem::size_of::<TriangleUniform>() as wgpu::BufferAddress;
             let uniform_bindgroup = wgpu_state.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 layout: &program.bind_group_layout,
-                bindings: &[
-                    wgpu::Binding {
+                entries: &[
+                    wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::Buffer {
-                            buffer: &ubo,
-                            range: 0..std::mem::size_of::<TriangleUniform>() as wgpu::BufferAddress
-                        },
+                        resource: wgpu::BindingResource::Buffer(ubo.slice(range)),
                     },
                 ],
                 label: None
             });
 
             let render_pipeline_layout = wgpu_state.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: None,
                 bind_group_layouts: &[&program.bind_group_layout],
+                push_constant_ranges: &[]
             });
 
             let pipeline = wgpu_state.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                layout: &render_pipeline_layout,
+                label: None,
+                layout: Some(&render_pipeline_layout),
                 vertex_stage: wgpu::ProgrammableStageDescriptor { module: &program.vertex, entry_point: "main" },
                 fragment_stage: Some(wgpu::ProgrammableStageDescriptor { module: &program.fragment, entry_point: "main" }),
                 rasterization_state: None,
@@ -128,15 +139,15 @@ impl<'a> System<'a> for DrawTriangleSystem {
     type SystemData = (ReadExpect<'a, WgpuState>, ReadExpect<'a, Time>);
 
     fn run(&mut self, (wgpu_state, time): Self::SystemData) {
-
         let dt = (*time).get_delta_time();
         self.elapsed += dt;
 
         let offset_y = 0.5 * f32::sin(2. * self.elapsed);
-        let tmp_buffer = wgpu_state.device.create_buffer_with_data(
-            bytemuck::cast_slice(&[TriangleUniform { offset: [0., offset_y, 0. ] }]),
-            wgpu::BufferUsage::COPY_SRC
-        );
+        let tmp_buffer = wgpu_state.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&[TriangleUniform { offset: [0., offset_y, 0. ] }]),
+            usage: wgpu::BufferUsage::COPY_SRC
+        });
 
         let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: None
@@ -147,24 +158,25 @@ impl<'a> System<'a> for DrawTriangleSystem {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             color_attachments: &[
                 wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: &wgpu_state.frame_texture.as_ref().unwrap().view,
+                    attachment: &wgpu_state.frame_texture.as_ref().unwrap().output.view,
                     resolve_target: None,
-                    load_op: wgpu::LoadOp::Clear,
-                    store_op: wgpu::StoreOp::Store,
-                    clear_color: Color::rgb(0.3, 0.1, 0.1).into()
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(Color::rgb(0.3, 0.1, 0.1).into()),
+                        store: true
+                    }
                 }
             ],
             depth_stencil_attachment: None
         });
 
         render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_vertex_buffer(0, &self.vbo, 0, 0);
-        render_pass.set_index_buffer(&self.ibo, 0, 0);
+        render_pass.set_vertex_buffer(0, self.vbo.slice(..));
+        render_pass.set_index_buffer(self.ibo.slice(..));
         render_pass.set_bind_group(0, &self.bindgroup, &[]);
         render_pass.draw_indexed(0..3, 0, 0..1);
         drop(render_pass);
 
-        wgpu_state.queue.submit(&[encoder.finish()]);
+        wgpu_state.queue.submit(Some(encoder.finish()));
         //
         // let uniform = glium::uniform! {
         //         offset: (0.0, , 0.0)

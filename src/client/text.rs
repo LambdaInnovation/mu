@@ -69,7 +69,9 @@ mod internal {
             let ref mut glyph_brush = font_data.glyph_brush;
 
             // Recall the staging belt
+            info!("Staging belt recall");
             futures::executor::block_on(self.staging_belt.recall());
+            info!("Staging belt recall finish");
 
             with_render_data(|rd| {
                 for cam in &mut rd.camera_infos {
@@ -95,6 +97,7 @@ mod internal {
                 }
             });
 
+            info!("Staging belt finish");
             self.staging_belt.finish();
         }
     }
