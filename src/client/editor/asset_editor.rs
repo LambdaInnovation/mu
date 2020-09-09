@@ -93,7 +93,6 @@ fn _walk_path(ctx: &mut AssetEditorPathRecurseContext, ui: &Ui, path: &PathBuf) 
         let is_selected = ctx.editor_info.selected == entry.path_hash;
         match entry.ty {
             DirEntryType::File => {
-                // FIXME: Unnecessary clone
                 let e = entry.clone();
                 TreeNode::new(&entry.filename)
                     .label(&entry.filename)
@@ -103,7 +102,7 @@ fn _walk_path(ctx: &mut AssetEditorPathRecurseContext, ui: &Ui, path: &PathBuf) 
                         if ui.is_item_clicked(MouseButton::Left) {
                             ctx.editor_info.selected = e.path_hash;
                             ctx.inspector_info_write.set_current_entry(
-                                Some(ctx.inspector_info_write.create_inspector(e.relative_path.clone())));
+                                Some(ctx.inspector_info_write.create_inspector(e.relative_path)));
                         }
                     });
             },

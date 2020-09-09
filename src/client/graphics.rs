@@ -827,7 +827,7 @@ impl Material {
 mod internal {
     use super::*;
     use futures::executor::*;
-    use futures::task::{SpawnExt, LocalSpawnExt};
+    use futures::task::{LocalSpawnExt};
 
     pub struct SysRenderPrepare {}
 

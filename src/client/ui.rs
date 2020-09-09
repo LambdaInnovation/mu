@@ -1035,7 +1035,8 @@ mod internal {
             wgpu_state.queue.submit(Some(encoder.finish()));
 
             let spawner = self.local_pool.spawner();
-            spawner.spawn_local(self.text_staging_belt.recall());
+            spawner.spawn_local(self.text_staging_belt.recall())
+                .expect("Recall staging belt");
         }
     }
 }
