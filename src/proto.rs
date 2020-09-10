@@ -7,6 +7,8 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
 use specs::shred::DynamicSystemData;
 use crate::asset::load_asset;
+use std::future::Future;
+use std::pin::Pin;
 
 pub enum ComponentLoadState {
     Init(Value),
@@ -82,10 +84,9 @@ pub struct ComponentPostIntegrateContext<'a> {
 pub trait ComponentS11n<'a, T> where T: Component {
     type SystemData: DynamicSystemData<'a>;
 
-    /// Load the data from given json value.
-    ///
-    /// Currently is blocking but async methods should be investigated in the future.
-    fn load(data: &Value, system_data: &mut Self::SystemData) -> T;
+    /// Load the data from given json value. It allows you to read the system data and then
+    /// do the other job in the async fasion.
+    fn load(data: &Value, system_data: &mut Self::SystemData) -> Pin<Box<dyn Future<Output = T>>>;
 
     /// Invoked after all entities' components load complete, and just before this component is inserted
     /// into the storage.
@@ -99,7 +100,7 @@ pub trait ComponentS11n<'a, T> where T: Component {
 }
 
 struct ComponentStagingData<T> where T: Component {
-    staging_components: HashMap<(u32, usize), T>
+    staging_components: HashMap<(u32, usize), Arc<Mutex<Poll<T>>>>
 }
 
 impl<'a, C, T> System<'a> for T where C: ComponentS11n<'a, T>, T: Component {
@@ -115,9 +116,17 @@ impl<'a, C, T> System<'a> for T where C: ComponentS11n<'a, T>, T: Component {
                 if let Some(state) = ent.components.get_mut(C::type_name()) {
                     let next_state = match state {
                         ComponentLoadState::Init(v) => { // Init时，目前直接调用序列化代码
-                            let loaded_cmpt = C::load(&*v, &mut data);
-                            staging_data.staging_components.insert((entry.idx, idx), loaded_cmpt);
-                            Some(ComponentLoadState::Finished)
+                            let arc = Arc::new(Mutex::new(Poll::Pending));
+                            let arc_clone = arc.clone();
+                            async move {
+                                let cmpt = C::load(&*v, &mut data).await;
+                                (*arc_clone.lock()) = Poll::Ready(cmpt);
+                            }
+                            staging_data.staging_components.insert((entry.idx, idx), arc);
+                            Some(ComponentLoadState::Processing)
+                        },
+                        ComponentLoadState::Processing => {
+                            // TODO
                         },
                         ComponentLoadState::Integrate(e) => {
                             let cmpt = staging_data.staging_components.remove(&(entry.idx, idx)).unwrap();
