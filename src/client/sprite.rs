@@ -548,6 +548,7 @@ pub(super) mod editor {
     pub struct SpriteSheetEditor {
         config: SpriteSheetConfig,
         path: PathBuf,
+        texture_size: Vec2,
         texture_id: imgui::TextureId,
         activated: bool
     }
@@ -578,7 +579,7 @@ pub(super) mod editor {
                 .collect();
 
             meditor::with_frame(|ui| {
-                for editor in (&mut editors).join() {
+                for (entity, editor) in (&entities, &mut editors).join() {
                     // Remove already-have requests, active associated windows
                     if let Some((idx, _)) = requests.iter().enumerate()
                         .find(|(_, x)| x.0 == editor.path) {
@@ -586,10 +587,23 @@ pub(super) mod editor {
                         requests.remove(idx);
                     }
 
+                    let mut opened = true;
                     imgui::Window::new(&im_str!("Sprite Editor"))
+                        .opened(&mut opened)
                         .build(ui, || {
+                            let [ww, wh] = ui.content_region_avail();
+                            let img_aspect: f32 = editor.texture_size.x / editor.texture_size.y;
+                            let width = f32::min(ww, wh * img_aspect);
+                            let height = width / img_aspect;
+
+                            imgui::Image::new(editor.texture_id, [width, height])
+                                .build(ui);
                             // imgui::Image::new()
                         });
+
+                    if !opened {
+                        entities.delete(entity).unwrap();
+                    }
                 }
             });
 
@@ -606,7 +620,8 @@ pub(super) mod editor {
                         config,
                         path: path,
                         texture_id,
-                        activated: true
+                        activated: true,
+                        texture_size: vec2(w as f32, h as f32)
                     };
 
                     let ent = entities.create();
