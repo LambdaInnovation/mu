@@ -202,7 +202,7 @@ impl<'a, T> System<'a> for ComponentS11nSystem<T>
                             let fut = self.0.load(temp_value, &mut data);
                             // https://github.com/rust-lang/rust/issues/71723
                             // 下面是预期的真正的async load代码，但是遇到了个奇怪的编译器报错，
-                            //     | ...                   staging_data.thread_pool.spawn_ok(async move {
+                            //     | ...                   staging_data.thread_pool.spawn_ok(async move {}
                             //     |                                                ^^^^^^^^ one type is more general than the other
                             //     |
                             //     = note: expected type `proto::ComponentS11n<'_>`
