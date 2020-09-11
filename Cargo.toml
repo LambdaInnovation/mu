@@ -26,7 +26,7 @@ specs-derive = "0.4.1"
 cgmath = { version = "*", features = ["serde"] }
 rand = "*"
 image = "*"
-futures = "*"
+futures = { version = "*", features = ["thread-pool"] }
 strum = "0.19"
 strum_macros = "0.19"
 

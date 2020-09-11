@@ -15,7 +15,6 @@ use crate::util::Color;
 use crate::resource::{ResourceRef, ResManager};
 use std::collections::HashMap;
 use crate::proto::{ComponentS11n, ProtoLoadContext, ProtoStoreContext};
-use crate::proto_default::DefaultExtras;
 use serde_json::Value;
 use imgui_inspect_derive::Inspect;
 use super::editor::inspect::*;
@@ -116,25 +115,25 @@ impl SpriteRef {
 
 }
 
-impl<Extras: DefaultExtras> ComponentS11n<Extras> for SpriteRef {
-    fn load(v: Value, ctx: &mut ProtoLoadContext<Extras>) -> Self {
-        let s11n: SpriteRefS11n = serde_json::from_value(v).unwrap();
-        let sheet = load_sprite_sheet(ctx.resource_mgr, ctx.extras.wgpu_state(), &s11n.sheet).unwrap();
-        SpriteRef::new(&sheet, s11n.idx)
-    }
-
-    fn store(&self, ctx: &ProtoStoreContext<Extras>) -> Value {
-        let sheet = ctx.resource_mgr.get(&self.sheet);
-        let sheet_path = sheet.path.clone().expect("No SpriteSheet path");
-
-        let s11n = SpriteRefS11n {
-            sheet: sheet_path,
-            idx: self.idx
-        };
-
-        serde_json::to_value(s11n).unwrap()
-    }
-}
+// impl<Extras: DefaultExtras> ComponentS11n<Extras> for SpriteRef {
+//     fn load(v: Value, ctx: &mut ProtoLoadContext<Extras>) -> Self {
+//         let s11n: SpriteRefS11n = serde_json::from_value(v).unwrap();
+//         let sheet = load_sprite_sheet(ctx.resource_mgr, ctx.extras.wgpu_state(), &s11n.sheet).unwrap();
+//         SpriteRef::new(&sheet, s11n.idx)
+//     }
+//
+//     fn store(&self, ctx: &ProtoStoreContext<Extras>) -> Value {
+//         let sheet = ctx.resource_mgr.get(&self.sheet);
+//         let sheet_path = sheet.path.clone().expect("No SpriteSheet path");
+//
+//         let s11n = SpriteRefS11n {
+//             sheet: sheet_path,
+//             idx: self.idx
+//         };
+//
+//         serde_json::to_value(s11n).unwrap()
+//     }
+// }
 
 pub fn load_sprite_sheet(res_mgr: &mut ResManager, wgpu_state: &WgpuState, path: &str) -> io::Result<ResourceRef<SpriteSheet>> {
     let key = get_path_hash(path);
@@ -193,25 +192,25 @@ impl Component for SpriteRenderer {
     type Storage = VecStorage<Self>;
 }
 
-impl<Extras> ComponentS11n<Extras> for SpriteRenderer where Extras: DefaultExtras {
-    fn load(mut data: Value, ctx: &mut ProtoLoadContext<Extras>) -> Self {
-        let color: Color = ComponentS11n::load(data["color"].take(), ctx);
-        let sprite_ref = ComponentS11n::load(data["sprite"].take(), ctx);
-
-        Self {
-            color,
-            sprite: sprite_ref,
-            material: None
-        }
-    }
-
-    fn store(&self, ctx: &ProtoStoreContext<Extras>) -> Value {
-        serde_json::json!({
-            "color": ComponentS11n::store(&self.color, ctx),
-            "sprite": ComponentS11n::store(&self.sprite, ctx)
-        })
-    }
-}
+// impl<Extras> ComponentS11n<Extras> for SpriteRenderer where Extras: DefaultExtras {
+//     fn load(mut data: Value, ctx: &mut ProtoLoadContext<Extras>) -> Self {
+//         let color: Color = ComponentS11n::load(data["color"].take(), ctx);
+//         let sprite_ref = ComponentS11n::load(data["sprite"].take(), ctx);
+//
+//         Self {
+//             color,
+//             sprite: sprite_ref,
+//             material: None
+//         }
+//     }
+//
+//     fn store(&self, ctx: &ProtoStoreContext<Extras>) -> Value {
+//         serde_json::json!({
+//             "color": ComponentS11n::store(&self.color, ctx),
+//             "sprite": ComponentS11n::store(&self.sprite, ctx)
+//         })
+//     }
+// }
 
 pub struct SpriteModule;
 

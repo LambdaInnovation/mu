@@ -9,12 +9,21 @@ use specs::shred::DynamicSystemData;
 use crate::asset::load_asset;
 use std::future::Future;
 use std::pin::Pin;
+use futures::executor::ThreadPool;
+use std::marker::PhantomData;
+
+#[derive(Copy, Clone, PartialEq)]
+pub enum ProtoLoadState {
+    ComponentLoad,
+    Integrate,
+    Finalize
+}
 
 pub enum ComponentLoadState {
     Init(Value),
     Processing,
     Finished,
-    Integrate(Entity),
+    Integrate,
     Finalize
 }
 
@@ -27,8 +36,12 @@ pub struct LoadingEntity {
 pub struct ProtoLoadContext {
     idx: u32, // An unique id to distinguish between load requests
     loading_entities: Vec<LoadingEntity>,
+    entities: Vec<Entity>, // Empty in the beginning, will be filled just before component Integrate state start.
+    state: ProtoLoadState,
     result: ProtoLoadResult
 }
+
+pub struct ProtoStoreContext {}
 
 pub struct ProtoLoadContexts {
     v: Vec<ProtoLoadContext>,
@@ -67,7 +80,9 @@ impl ProtoLoadContexts {
         let ctx = ProtoLoadContext {
             idx: self.counter,
             loading_entities,
-            result: arc.clone()
+            result: arc.clone(),
+            entities: vec![],
+            state: ProtoLoadState::ComponentLoad
         };
         self.v.push(ctx);
 
@@ -77,60 +92,132 @@ impl ProtoLoadContexts {
 }
 
 pub struct ComponentPostIntegrateContext<'a> {
+    /// Index of the proto load request.
+    pub request_idx: u32,
+    /// Index of entity in the loaded entity list.
     pub self_idx: usize,
     pub entity_vec: &'a Vec<Entity>,
 }
 
-pub trait ComponentS11n<'a, T> where T: Component {
-    type SystemData: DynamicSystemData<'a>;
+pub trait ComponentS11n<'a> {
+    type SystemData: SystemData<'a>;
+    type Output: Component + Send + Sync;
+    type LoadResult: Send + Sync;
 
-    /// Load the data from given json value. It allows you to read the system data and then
-    /// do the other job in the async fasion.
-    fn load(data: &Value, system_data: &mut Self::SystemData) -> Pin<Box<dyn Future<Output = T>>>;
+    /// Load the data from given json value. The data is used in the integration process to be converted into
+    /// actual component. Can be component itself or other middle representation. The process is async.
+    fn load(&mut self, data: Value, system_data: &mut Self::SystemData) -> Pin<Box<dyn Future<Output = Self::LoadResult> + Send + Sync>>;
 
-    /// Invoked after all entities' components load complete, and just before this component is inserted
-    /// into the storage.
-    ///
-    /// Usually used to gather cross-entity references.
-    fn integrate(_instance: &mut T, _ctx: ComponentPostIntegrateContext) {}
+    /// Convert the load result into component, which will be later inserted into the storage.
+    fn integrate(&mut self, load_result: Self::LoadResult, ctx: ComponentPostIntegrateContext) -> Self::Output;
 
     /// Get type name literal used in json representation.
     /// We can use std::any::type_name, but that has no stability guarantee.
-    fn type_name() -> &'static str;
+    fn type_name(&self) -> &'static str;
 }
 
-struct ComponentStagingData<T> where T: Component {
-    staging_components: HashMap<(u32, usize), Arc<Mutex<Poll<T>>>>
+pub struct DefaultS11n<T>
+    where T: Component + Send + Sync + Serialize + DeserializeOwned {
+    name: &'static str,
+    marker: PhantomData<T>
 }
 
-impl<'a, C, T> System<'a> for T where C: ComponentS11n<'a, T>, T: Component {
+impl<T> DefaultS11n<T>
+    where T: Component + Send + Sync + Serialize + DeserializeOwned {
+    pub fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            marker: PhantomData
+        }
+    }
+}
+
+impl<'a, T> ComponentS11n<'a> for DefaultS11n<T>
+    where T: Component + Send + Sync + Serialize + DeserializeOwned
+{
+    type SystemData = ();
+    type Output = T;
+    type LoadResult = T;
+
+    fn load(&mut self, data: Value, _: &mut Self::SystemData) -> Pin<Box<dyn Future<Output=T> + Send + Sync>> {
+        let ret: T = serde_json::from_value(data).unwrap();
+        Box::pin(async move {
+            ret
+        })
+    }
+
+    fn integrate(&mut self, instance: Self::Output, _: ComponentPostIntegrateContext) -> T {
+        instance
+    }
+
+    fn type_name(&self) -> &'static str {
+        self.name
+    }
+}
+
+pub struct ComponentStagingData<T> where T: Send + Sync {
+    staging_components: HashMap<(u32, usize), Arc<Mutex<Poll<T>>>>,
+    thread_pool: ThreadPool
+}
+
+impl<'a, T, D, L: 'static> System<'a> for dyn ComponentS11n<'a, Output=T, SystemData=D, LoadResult=L>
+    where T: Component + Send + Sync, D: SystemData<'a>, L: Send + Sync {
     type SystemData = (
         WriteExpect<'a, ProtoLoadContexts>,
-        WriteExpect<'a, ComponentStagingData<T>>,
+        WriteExpect<'a, ComponentStagingData<L>>,
         WriteStorage<'a, T>,
-        C::SystemData);
+        D);
 
     fn run(&mut self, (mut proto_loads, mut staging_data, mut cmpt_write, mut data): Self::SystemData) {
         for entry in &mut proto_loads.v {
             for (idx, ent) in entry.loading_entities.iter_mut().enumerate() {
-                if let Some(state) = ent.components.get_mut(C::type_name()) {
-                    let next_state = match state {
+                let key = (entry.idx, idx);
+                if let Some(state) = ent.components.get_mut(self.type_name()) {
+                    let next_state = match &state {
                         ComponentLoadState::Init(v) => { // Init时，目前直接调用序列化代码
                             let arc = Arc::new(Mutex::new(Poll::Pending));
                             let arc_clone = arc.clone();
-                            async move {
-                                let cmpt = C::load(&*v, &mut data).await;
-                                (*arc_clone.lock()) = Poll::Ready(cmpt);
-                            }
+                            // TODO: Useless and expensive clone
+                            let temp_value = v.clone();
+                            let fut = self.load(temp_value, &mut data);
+                            staging_data.thread_pool.spawn_ok(async move {
+                                let loaded_data = fut.await;
+                                *arc_clone.lock().unwrap() = Poll::Ready(loaded_data);
+                            });
                             staging_data.staging_components.insert((entry.idx, idx), arc);
                             Some(ComponentLoadState::Processing)
                         },
                         ComponentLoadState::Processing => {
-                            // TODO
+                            let can_remove = {
+                                let ref x = staging_data.staging_components[&key];
+                                x.lock().unwrap().is_ready()
+                            };
+
+                            if can_remove {
+                                Some(ComponentLoadState::Finished)
+                            } else {
+                                None
+                            }
                         },
-                        ComponentLoadState::Integrate(e) => {
-                            let cmpt = staging_data.staging_components.remove(&(entry.idx, idx)).unwrap();
-                            cmpt_write.insert(*e, cmpt);
+                        ComponentLoadState::Integrate => {
+                            let e = entry.entities[idx];
+                            let result_arc = staging_data.staging_components.remove(&key).unwrap();
+                            let result = Arc::try_unwrap(result_arc)
+                                .unwrap_or_else(|_| panic!())
+                                .into_inner()
+                                .unwrap();
+
+                            match result {
+                                Poll::Ready(mut load_data) => {
+                                    let cmpt = self.integrate(load_data, ComponentPostIntegrateContext {
+                                        self_idx: idx,
+                                        entity_vec: &entry.entities,
+                                        request_idx: entry.idx
+                                    });
+                                    cmpt_write.insert(e, cmpt).unwrap();
+                                }
+                                _ => unreachable!()
+                            }
 
                             Some(ComponentLoadState::Finalize)
                         },
@@ -148,10 +235,40 @@ impl<'a, C, T> System<'a> for T where C: ComponentS11n<'a, T>, T: Component {
 struct EntityLoadSystem;
 
 impl<'a> System<'a> for EntityLoadSystem {
-    type SystemData = ();
+    type SystemData = (WriteExpect<'a, ProtoLoadContexts>, Entities<'a>);
 
-    fn run(&mut self, data: Self::SystemData) {
-        unimplemented!()
+    fn run(&mut self, (mut proto_loads, entities): Self::SystemData) {
+        for ctx in &mut proto_loads.v {
+            match ctx.state {
+                ProtoLoadState::ComponentLoad => {
+                    // 若所有组件加载完成 则进入Integrate状态
+                    if ctx.loading_entities.iter()
+                        .all(|x| x.components.values()
+                            .all(|x| match x { ComponentLoadState::Finished => true, _ => false } )) {
+                        for _ in 0..ctx.loading_entities.len() {
+                            ctx.entities.push(entities.create());
+                            ctx.loading_entities.iter_mut()
+                                .for_each(|loading_ent| {
+                                    loading_ent.components.values_mut()
+                                        .for_each(|cmpt| *cmpt = ComponentLoadState::Integrate);
+                                })
+                        }
+                        ctx.state = ProtoLoadState::Integrate;
+                    }
+                }
+                ProtoLoadState::Integrate => {
+                    // 若所有组件Finalize 则进入Finalize状态
+                    if ctx.loading_entities.iter()
+                        .all(|x| x.components.values()
+                            .all(|y| match y { ComponentLoadState::Finalize => true, _ => false }) ){
+                        *ctx.result.lock().unwrap() = Poll::Ready(ctx.entities.drain(..).collect());
+                    }
+                }
+                ProtoLoadState::Finalize => ()
+            }
+        }
+
+        proto_loads.v.retain(|x| x.state != ProtoLoadState::Finalize);
     }
 }
 

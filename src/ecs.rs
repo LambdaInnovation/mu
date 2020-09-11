@@ -7,6 +7,9 @@ use crate::proto::*;
 use serde_json::Value;
 use serde::{Serialize, Deserialize};
 use specs_derive::*;
+use std::pin::Pin;
+use futures::Future;
+use std::collections::HashMap;
 
 const MAX_DELTA_TIME: f32 = 0.1;
 
@@ -114,19 +117,27 @@ pub struct HasParentS11n {
     entity_ix: usize
 }
 
-impl<T> ComponentS11n<T> for HasParent {
-    fn load(data: Value, ctx: &mut ProtoLoadContext<T>) -> Self {
-        let tmp: HasParentS11n = serde_json::from_value(data).unwrap();
-        let entity = ctx.entities[tmp.entity_ix].clone();
+pub struct HasParentS11nSystem {
+}
+
+impl ComponentS11n<'_> for HasParentS11nSystem {
+    type SystemData = ();
+    type Output = HasParent;
+    type LoadResult = HasParentS11n;
+
+    fn load(&mut self, data: Value, _: &mut Self::SystemData) -> Pin<Box<dyn Future<Output=Self::LoadResult> + Send + Sync>> {
+        Box::pin(async move {
+            let s11n: HasParentS11n = serde_json::from_value(data).unwrap();
+            s11n
+        })
+    }
+
+    fn integrate(&mut self, s11n: HasParentS11n, ctx: ComponentPostIntegrateContext) -> HasParent {
         HasParent {
-            parent: entity
+            parent: ctx.entity_vec[s11n.entity_ix]
         }
     }
 
-    fn store(&self, ctx: &ProtoStoreContext<T>) -> Value {
-        let s11n = HasParentS11n {
-            entity_ix: ctx.entity_to_index[&self.parent]
-        };
-        serde_json::to_value(s11n).unwrap()
-    }
+
+    fn type_name(&self) -> &'static str { "HasParent" }
 }

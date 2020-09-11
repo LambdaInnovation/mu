@@ -468,6 +468,10 @@ impl RuntimeBuilder {
         // Default systems
         dispatcher_builder.add(HierarchySystem::<HasParent>::new(&mut init_ctx.init_data.world), "", &[]);
 
+        // Default serialized components
+        dispatcher_builder.add(proto::DefaultS11n::<ecs::Transform>::new("Transform"), "", &[]);
+        dispatcher_builder.add(ecs::HasParentS11nSystem {}, "", &[]);
+
         // Module init
         for game_module in &mut self.modules {
             game_module.init(&mut init_ctx);
