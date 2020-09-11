@@ -9,7 +9,6 @@ use serde::{Serialize, Deserialize};
 use specs_derive::*;
 use std::pin::Pin;
 use futures::Future;
-use std::collections::HashMap;
 
 const MAX_DELTA_TIME: f32 = 0.1;
 
@@ -113,31 +112,29 @@ impl Parent for HasParent {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct HasParentS11n {
+pub struct HasParentS11nData {
     entity_ix: usize
 }
 
-pub struct HasParentS11nSystem {
-}
+pub struct HasParentS11n;
 
-impl ComponentS11n<'_> for HasParentS11nSystem {
+impl ComponentS11n<'_> for HasParentS11n {
     type SystemData = ();
     type Output = HasParent;
-    type LoadResult = HasParentS11n;
+    type LoadResult = HasParentS11nData;
 
     fn load(&mut self, data: Value, _: &mut Self::SystemData) -> Pin<Box<dyn Future<Output=Self::LoadResult> + Send + Sync>> {
         Box::pin(async move {
-            let s11n: HasParentS11n = serde_json::from_value(data).unwrap();
+            let s11n: HasParentS11nData = serde_json::from_value(data).unwrap();
             s11n
         })
     }
 
-    fn integrate(&mut self, s11n: HasParentS11n, ctx: ComponentPostIntegrateContext) -> HasParent {
+    fn integrate(&mut self, s11n: HasParentS11nData, ctx: ComponentPostIntegrateContext) -> HasParent {
         HasParent {
             parent: ctx.entity_vec[s11n.entity_ix]
         }
     }
-
 
     fn type_name(&self) -> &'static str { "HasParent" }
 }

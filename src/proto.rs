@@ -5,11 +5,10 @@ use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
-use specs::shred::DynamicSystemData;
 use crate::asset::load_asset;
 use std::future::Future;
 use std::pin::Pin;
-use futures::executor::ThreadPool;
+use futures::executor::{ThreadPool, block_on};
 use std::marker::PhantomData;
 
 #[derive(Copy, Clone, PartialEq)]
@@ -49,6 +48,13 @@ pub struct ProtoLoadContexts {
 }
 
 impl ProtoLoadContexts {
+
+    pub fn new() -> Self {
+        ProtoLoadContexts {
+            v: vec![],
+            counter: 0
+        }
+    }
 
     pub fn push_request(&mut self, path: &str) -> ProtoLoadResult {
         let s: String = load_asset(path).unwrap();
@@ -101,8 +107,8 @@ pub struct ComponentPostIntegrateContext<'a> {
 
 pub trait ComponentS11n<'a> {
     type SystemData: SystemData<'a>;
-    type Output: Component + Send + Sync;
-    type LoadResult: Send + Sync;
+    type Output: 'static + Component + Send + Sync;
+    type LoadResult: 'static + Sized + Send;
 
     /// Load the data from given json value. The data is used in the integration process to be converted into
     /// actual component. Can be component itself or other middle representation. The process is async.
@@ -155,35 +161,63 @@ impl<'a, T> ComponentS11n<'a> for DefaultS11n<T>
     }
 }
 
-pub struct ComponentStagingData<T> where T: Send + Sync {
+pub struct ComponentStagingData<T> where T: Send {
     staging_components: HashMap<(u32, usize), Arc<Mutex<Poll<T>>>>,
+    #[allow(dead_code)]
     thread_pool: ThreadPool
 }
 
-impl<'a, T, D, L: 'static> System<'a> for dyn ComponentS11n<'a, Output=T, SystemData=D, LoadResult=L>
-    where T: Component + Send + Sync, D: SystemData<'a>, L: Send + Sync {
+impl<T: Send> ComponentStagingData<T> {
+    pub fn new() -> Self {
+        Self {
+            staging_components: HashMap::new(),
+            thread_pool: ThreadPool::new().unwrap()
+        }
+    }
+}
+
+pub struct ComponentS11nSystem<T>(pub T);
+
+impl<'a, T> System<'a> for ComponentS11nSystem<T>
+    where T: ComponentS11n<'a> {
     type SystemData = (
         WriteExpect<'a, ProtoLoadContexts>,
-        WriteExpect<'a, ComponentStagingData<L>>,
-        WriteStorage<'a, T>,
-        D);
+        WriteExpect<'a, ComponentStagingData<T::LoadResult>>,
+        WriteStorage<'a, T::Output>,
+        T::SystemData);
 
     fn run(&mut self, (mut proto_loads, mut staging_data, mut cmpt_write, mut data): Self::SystemData) {
         for entry in &mut proto_loads.v {
             for (idx, ent) in entry.loading_entities.iter_mut().enumerate() {
                 let key = (entry.idx, idx);
-                if let Some(state) = ent.components.get_mut(self.type_name()) {
+                if let Some(state) = ent.components.get_mut(self.0.type_name()) {
                     let next_state = match &state {
                         ComponentLoadState::Init(v) => { // Init时，目前直接调用序列化代码
                             let arc = Arc::new(Mutex::new(Poll::Pending));
                             let arc_clone = arc.clone();
+
                             // TODO: Useless and expensive clone
                             let temp_value = v.clone();
-                            let fut = self.load(temp_value, &mut data);
-                            staging_data.thread_pool.spawn_ok(async move {
-                                let loaded_data = fut.await;
+
+                            let fut = self.0.load(temp_value, &mut data);
+                            // https://github.com/rust-lang/rust/issues/71723
+                            // 下面是预期的真正的async load代码，但是遇到了个奇怪的编译器报错，
+                            //     | ...                   staging_data.thread_pool.spawn_ok(async move {
+                            //     |                                                ^^^^^^^^ one type is more general than the other
+                            //     |
+                            //     = note: expected type `proto::ComponentS11n<'_>`
+                            //                found type `proto::ComponentS11n<'a>`
+                            // 暂时不知如何解决，故先做成blocking了
+                            // staging_data.thread_pool.spawn_ok(async move {
+                            //     let loaded_data = fut.await;
+                            //     *arc_clone.lock().unwrap() = Poll::Ready(loaded_data);
+                            // });
+
+                            {
+                                let loaded_data = block_on(fut);
                                 *arc_clone.lock().unwrap() = Poll::Ready(loaded_data);
-                            });
+                            }
+
                             staging_data.staging_components.insert((entry.idx, idx), arc);
                             Some(ComponentLoadState::Processing)
                         },
@@ -208,8 +242,8 @@ impl<'a, T, D, L: 'static> System<'a> for dyn ComponentS11n<'a, Output=T, System
                                 .unwrap();
 
                             match result {
-                                Poll::Ready(mut load_data) => {
-                                    let cmpt = self.integrate(load_data, ComponentPostIntegrateContext {
+                                Poll::Ready(load_data) => {
+                                    let cmpt = self.0.integrate(load_data, ComponentPostIntegrateContext {
                                         self_idx: idx,
                                         entity_vec: &entry.entities,
                                         request_idx: entry.idx
