@@ -14,7 +14,6 @@ use crate::math::*;
 use crate::util::Color;
 use crate::resource::{ResourceRef, ResManager};
 use std::collections::HashMap;
-use crate::proto::{ComponentS11n, ProtoLoadContext, ProtoStoreContext};
 use serde_json::Value;
 use imgui_inspect_derive::Inspect;
 use super::editor::inspect::*;

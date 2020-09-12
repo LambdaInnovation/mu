@@ -477,7 +477,7 @@ impl RuntimeBuilder {
         // Default serialized components
         {
             use proto::InitContextProtoExt;
-            init_ctx.add_component_s11n(proto::DefaultS11n::<ecs::Transform>::new("Transform"));
+            init_ctx.add_component_s11n(proto::ComponentS11nDefault::<ecs::Transform>::new("Transform"));
             init_ctx.add_component_s11n(ecs::HasParentS11n);
         }
 

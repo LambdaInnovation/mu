@@ -1,15 +1,19 @@
-use specs::prelude::*;
-use serde_json::Value;
+use std::collections::HashMap;
+use std::future::Future;
+use std::marker::PhantomData;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
+
+use futures::executor::{block_on, ThreadPool};
 use serde::{de::DeserializeOwned, Serialize};
-use std::collections::HashMap;
+use serde_json::Value;
+use specs::prelude::*;
+
+use internal::*;
+
+use crate::{InitContext, InsertInfo, Module};
 use crate::asset::load_asset;
-use std::future::Future;
-use std::pin::Pin;
-use futures::executor::{ThreadPool, block_on};
-use std::marker::PhantomData;
-use crate::{Module, InitContext, InsertInfo};
 
 pub static DEP_PROTO_LOAD: &str = "proto_load";
 
@@ -31,50 +35,7 @@ impl ProtoLoadRequest {
 
 pub type ProtoLoadRequests = Vec<ProtoLoadRequest>;
 
-#[derive(Copy, Clone, PartialEq)]
-pub enum ProtoLoadState {
-    ComponentLoad,
-    Integrate,
-    Finalize
-}
-
-pub enum ComponentLoadState {
-    Init(Value),
-    Processing,
-    Finished,
-    Integrate,
-    Finalize
-}
-
 pub type ProtoLoadResult = Arc<Mutex<Poll <Vec<Entity>> >>;
-
-pub struct LoadingEntity {
-    components: HashMap<String, ComponentLoadState>,
-}
-
-pub struct ProtoLoadContext {
-    idx: u32, // An unique id to distinguish between load requests
-    loading_entities: Vec<LoadingEntity>,
-    entities: Vec<Entity>,
-    state: ProtoLoadState,
-    result: ProtoLoadResult
-}
-
-pub struct ProtoStoreContext {}
-
-pub struct ProtoLoadContexts {
-    v: Vec<ProtoLoadContext>,
-}
-
-impl ProtoLoadContexts {
-
-    pub(super) fn new() -> Self {
-        ProtoLoadContexts {
-            v: vec![],
-        }
-    }
-
-}
 
 pub struct ComponentLoadArgs<'a> {
     pub data: Value,
@@ -93,13 +54,13 @@ pub trait ComponentS11n<'a> {
     fn type_name(&self) -> &'static str;
 }
 
-pub struct DefaultS11n<T>
+pub struct ComponentS11nDefault<T>
     where T: Component + Send + Sync + Serialize + DeserializeOwned {
     name: &'static str,
     marker: PhantomData<T>
 }
 
-impl<T> DefaultS11n<T>
+impl<T> ComponentS11nDefault<T>
     where T: Component + Send + Sync + Serialize + DeserializeOwned {
     pub fn new(name: &'static str) -> Self {
         Self {
@@ -109,7 +70,7 @@ impl<T> DefaultS11n<T>
     }
 }
 
-impl<'a, T> ComponentS11n<'a> for DefaultS11n<T>
+impl<'a, T> ComponentS11n<'a> for ComponentS11nDefault<T>
     where T: Component + Send + Sync + Serialize + DeserializeOwned
 {
     type SystemData = ();
@@ -233,96 +194,6 @@ impl<'a, T> System<'a> for ComponentS11nSystem<T>
     }
 }
 
-struct EntityLoadSystem {
-    counter: u32
-}
-
-impl EntityLoadSystem {
-    pub fn new() -> Self {
-        Self {
-            counter: 0
-        }
-    }
-}
-
-impl<'a> System<'a> for EntityLoadSystem {
-    type SystemData = (WriteExpect<'a, ProtoLoadRequests>, WriteExpect<'a, ProtoLoadContexts>, Entities<'a>);
-
-    fn run(&mut self, (mut requests, mut proto_loads, entities): Self::SystemData) {
-        requests.drain(..)
-            .for_each(|req| {
-                let s: String = load_asset(&req.path).unwrap();
-                let value: Value = serde_json::from_str(&s).unwrap();
-
-                let loading_entities = match value {
-                    Value::Array(v) => {
-                        v.into_iter()
-                            .map(|entity_value| {
-                                match entity_value {
-                                    Value::Object(m) => {
-                                        let mut components = HashMap::new();
-                                        for (k, v) in m {
-                                            components.insert(k, ComponentLoadState::Init(v));
-                                        }
-                                        LoadingEntity {
-                                            components,
-                                        }
-                                    }
-                                    _ => panic!("Invalid entity data type, expecting object")
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                    }
-                    _ => panic!("Invalid root type")
-                };
-                let entity_count = loading_entities.len();
-
-                let arc = Arc::new(Mutex::new( Poll::Pending ));
-                let ctx = ProtoLoadContext {
-                    idx: self.counter,
-                    loading_entities,
-                    result: arc.clone(),
-                    state: ProtoLoadState::ComponentLoad,
-                    entities: (0..entity_count).map(|_| entities.create()).collect()
-                };
-                proto_loads.v.push(ctx);
-                self.counter += 1;
-            });
-
-        for ctx in &mut proto_loads.v {
-            match ctx.state {
-                ProtoLoadState::ComponentLoad => {
-                    // 若所有组件加载完成 则进入Integrate状态
-                    if ctx.loading_entities.iter()
-                        .all(|x| x.components.values()
-                            .all(|x| match x { ComponentLoadState::Finished => true, _ => false } )) {
-                        for _ in 0..ctx.loading_entities.len() {
-                            ctx.entities.push(entities.create());
-                            ctx.loading_entities.iter_mut()
-                                .for_each(|loading_ent| {
-                                    loading_ent.components.values_mut()
-                                        .for_each(|cmpt| *cmpt = ComponentLoadState::Integrate);
-                                })
-                        }
-                        ctx.state = ProtoLoadState::Integrate;
-                    }
-                }
-                ProtoLoadState::Integrate => {
-                    // 若所有组件Finalize 则进入Finalize状态
-                    if ctx.loading_entities.iter()
-                        .all(|x| x.components.values()
-                            .all(|y| match y { ComponentLoadState::Finalize => true, _ => false }) ){
-                        *ctx.result.lock().unwrap() = Poll::Ready(ctx.entities.drain(..).collect());
-                    }
-                }
-                ProtoLoadState::Finalize => ()
-            }
-        }
-
-        proto_loads.v.retain(|x| x.state != ProtoLoadState::Finalize);
-    }
-}
-
 pub(super) struct ProtoModule;
 
 impl Module for ProtoModule {
@@ -330,7 +201,8 @@ impl Module for ProtoModule {
         ctx.init_data.world.insert(ProtoLoadRequests::new());
         ctx.init_data.world.insert(ProtoLoadContexts::new());
 
-        ctx.dispatch(InsertInfo::new(DEP_PROTO_LOAD), |_, i| i.insert(EntityLoadSystem::new()));
+        ctx.dispatch(InsertInfo::new(DEP_PROTO_LOAD),
+                     |_, i| i.insert(internal::EntityLoadSystem::new()));
     }
 }
 
@@ -342,5 +214,142 @@ impl InitContextProtoExt for super::InitContext {
     fn add_component_s11n<T: 'static + for<'a> ComponentS11n<'a> + Send>(&mut self, s11n: T) {
         self.dispatch(InsertInfo::default().after(&[DEP_PROTO_LOAD]),
             |_, i| i.insert(ComponentS11nSystem(s11n)));
+    }
+}
+
+pub(super) mod internal {
+    use super::*;
+
+    #[derive(Copy, Clone, PartialEq)]
+    pub enum ProtoLoadState {
+        ComponentLoad,
+        Integrate,
+        Finalize
+    }
+
+    pub enum ComponentLoadState {
+        Init(Value),
+        Processing,
+        Finished,
+        Integrate,
+        Finalize
+    }
+
+    pub struct LoadingEntity {
+        pub components: HashMap<String, ComponentLoadState>,
+    }
+
+    pub struct ProtoLoadContext {
+        pub idx: u32, // An unique id to distinguish between load requests
+        pub loading_entities: Vec<LoadingEntity>,
+        pub entities: Vec<Entity>,
+        pub state: ProtoLoadState,
+        pub result: ProtoLoadResult
+    }
+
+    pub struct ProtoLoadContexts {
+        pub v: Vec<ProtoLoadContext>,
+    }
+
+    impl ProtoLoadContexts {
+
+        pub(super) fn new() -> Self {
+            ProtoLoadContexts {
+                v: vec![],
+            }
+        }
+
+    }
+
+    pub struct ProtoStoreContext {}
+
+    pub struct EntityLoadSystem {
+        counter: u32
+    }
+
+    impl EntityLoadSystem {
+        pub fn new() -> Self {
+            Self {
+                counter: 0
+            }
+        }
+    }
+
+    impl<'a> System<'a> for EntityLoadSystem {
+        type SystemData = (WriteExpect<'a, ProtoLoadRequests>, WriteExpect<'a, ProtoLoadContexts>, Entities<'a>);
+
+        fn run(&mut self, (mut requests, mut proto_loads, entities): Self::SystemData) {
+            requests.drain(..)
+                .for_each(|req| {
+                    let s: String = load_asset(&req.path).unwrap();
+                    let value: Value = serde_json::from_str(&s).unwrap();
+
+                    let loading_entities = match value {
+                        Value::Array(v) => {
+                            v.into_iter()
+                                .map(|entity_value| {
+                                    match entity_value {
+                                        Value::Object(m) => {
+                                            let mut components = HashMap::new();
+                                            for (k, v) in m {
+                                                components.insert(k, ComponentLoadState::Init(v));
+                                            }
+                                            LoadingEntity {
+                                                components,
+                                            }
+                                        }
+                                        _ => panic!("Invalid entity data type, expecting object")
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                        }
+                        _ => panic!("Invalid root type")
+                    };
+                    let entity_count = loading_entities.len();
+
+                    let arc = Arc::new(Mutex::new( Poll::Pending ));
+                    let ctx = ProtoLoadContext {
+                        idx: self.counter,
+                        loading_entities,
+                        result: arc.clone(),
+                        state: ProtoLoadState::ComponentLoad,
+                        entities: (0..entity_count).map(|_| entities.create()).collect()
+                    };
+                    proto_loads.v.push(ctx);
+                    self.counter += 1;
+                });
+
+            for ctx in &mut proto_loads.v {
+                match ctx.state {
+                    ProtoLoadState::ComponentLoad => {
+                        // 若所有组件加载完成 则进入Integrate状态
+                        if ctx.loading_entities.iter()
+                            .all(|x| x.components.values()
+                                .all(|x| match x { ComponentLoadState::Finished => true, _ => false } )) {
+                            for _ in 0..ctx.loading_entities.len() {
+                                ctx.entities.push(entities.create());
+                                ctx.loading_entities.iter_mut()
+                                    .for_each(|loading_ent| {
+                                        loading_ent.components.values_mut()
+                                            .for_each(|cmpt| *cmpt = ComponentLoadState::Integrate);
+                                    })
+                            }
+                            ctx.state = ProtoLoadState::Integrate;
+                        }
+                    }
+                    ProtoLoadState::Integrate => {
+                        // 若所有组件Finalize 则进入Finalize状态
+                        if ctx.loading_entities.iter()
+                            .all(|x| x.components.values()
+                                .all(|y| match y { ComponentLoadState::Finalize => true, _ => false }) ){
+                            *ctx.result.lock().unwrap() = Poll::Ready(ctx.entities.drain(..).collect());
+                        }
+                    }
+                    ProtoLoadState::Finalize => ()
+                }
+            }
+
+            proto_loads.v.retain(|x| x.state != ProtoLoadState::Finalize);
+        }
     }
 }
