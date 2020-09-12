@@ -4,7 +4,6 @@ use crate::math::*;
 use std::time::Instant;
 use specs_hierarchy::Parent;
 use crate::proto::*;
-use serde_json::Value;
 use serde::{Serialize, Deserialize};
 use specs_derive::*;
 use std::pin::Pin;
@@ -112,7 +111,7 @@ impl Parent for HasParent {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct HasParentS11nData {
+struct HasParentS11nData {
     entity_ix: usize
 }
 
@@ -121,19 +120,15 @@ pub struct HasParentS11n;
 impl ComponentS11n<'_> for HasParentS11n {
     type SystemData = ();
     type Output = HasParent;
-    type LoadResult = HasParentS11nData;
 
-    fn load(&mut self, data: Value, _: &mut Self::SystemData) -> Pin<Box<dyn Future<Output=Self::LoadResult> + Send + Sync>> {
+    fn load_async(&mut self, ctx: ComponentLoadArgs, _: &mut Self::SystemData) -> Pin<Box<dyn Future<Output=Self::Output> + Send + Sync>> {
+        let s11n: HasParentS11nData = serde_json::from_value(ctx.data).unwrap();
+        let ent = ctx.all_entity_vec[s11n.entity_ix];
         Box::pin(async move {
-            let s11n: HasParentS11nData = serde_json::from_value(data).unwrap();
-            s11n
+            HasParent {
+                parent: ent
+            }
         })
-    }
-
-    fn integrate(&mut self, s11n: HasParentS11nData, ctx: ComponentPostIntegrateContext) -> HasParent {
-        HasParent {
-            parent: ctx.entity_vec[s11n.entity_ix]
-        }
     }
 
     fn type_name(&self) -> &'static str { "HasParent" }

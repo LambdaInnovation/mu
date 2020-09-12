@@ -1,6 +1,5 @@
 use specs::prelude::*;
 use serde_json::Value;
-use crate::resource::ResManager;
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use serde::{de::DeserializeOwned, Serialize};
@@ -10,6 +9,27 @@ use std::future::Future;
 use std::pin::Pin;
 use futures::executor::{ThreadPool, block_on};
 use std::marker::PhantomData;
+use crate::{Module, InitContext, InsertInfo};
+
+pub static DEP_PROTO_LOAD: &str = "proto_load";
+
+pub struct ProtoLoadRequest {
+    pub path: String,
+    pub result: ProtoLoadResult
+}
+
+impl ProtoLoadRequest {
+
+    pub fn new(path: &str) -> Self {
+        Self {
+            path: path.to_string(),
+            result: Arc::new(Mutex::new(Poll::Pending))
+        }
+    }
+
+}
+
+pub type ProtoLoadRequests = Vec<ProtoLoadRequest>;
 
 #[derive(Copy, Clone, PartialEq)]
 pub enum ProtoLoadState {
@@ -29,13 +49,13 @@ pub enum ComponentLoadState {
 pub type ProtoLoadResult = Arc<Mutex<Poll <Vec<Entity>> >>;
 
 pub struct LoadingEntity {
-    components: HashMap<String, ComponentLoadState>
+    components: HashMap<String, ComponentLoadState>,
 }
 
 pub struct ProtoLoadContext {
     idx: u32, // An unique id to distinguish between load requests
     loading_entities: Vec<LoadingEntity>,
-    entities: Vec<Entity>, // Empty in the beginning, will be filled just before component Integrate state start.
+    entities: Vec<Entity>,
     state: ProtoLoadState,
     result: ProtoLoadResult
 }
@@ -44,78 +64,29 @@ pub struct ProtoStoreContext {}
 
 pub struct ProtoLoadContexts {
     v: Vec<ProtoLoadContext>,
-    counter: u32,
 }
 
 impl ProtoLoadContexts {
 
-    pub fn new() -> Self {
+    pub(super) fn new() -> Self {
         ProtoLoadContexts {
             v: vec![],
-            counter: 0
         }
-    }
-
-    pub fn push_request(&mut self, path: &str) -> ProtoLoadResult {
-        let s: String = load_asset(path).unwrap();
-        let value: Value = serde_json::from_str(&s).unwrap();
-
-        let loading_entities = match value {
-            Value::Array(v) => {
-                v.into_iter()
-                    .map(|entity_value| {
-                        match entity_value {
-                            Value::Object(m) => {
-                                let mut components = HashMap::new();
-                                for (k, v) in m {
-                                    components.insert(k, ComponentLoadState::Init(v));
-                                }
-                                LoadingEntity {
-                                    components
-                                }
-                            }
-                            _ => panic!("Invalid entity data type, expecting object")
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            }
-            _ => panic!("Invalid root type")
-        };
-
-        let arc = Arc::new(Mutex::new( Poll::Pending ));
-        let ctx = ProtoLoadContext {
-            idx: self.counter,
-            loading_entities,
-            result: arc.clone(),
-            entities: vec![],
-            state: ProtoLoadState::ComponentLoad
-        };
-        self.v.push(ctx);
-
-        arc
     }
 
 }
 
-pub struct ComponentPostIntegrateContext<'a> {
-    /// Index of the proto load request.
-    pub request_idx: u32,
-    /// Index of entity in the loaded entity list.
-    pub self_idx: usize,
-    pub entity_vec: &'a Vec<Entity>,
+pub struct ComponentLoadArgs<'a> {
+    pub data: Value,
+    pub entity_idx: usize,
+    pub all_entity_vec: &'a Vec<Entity>
 }
 
 pub trait ComponentS11n<'a> {
     type SystemData: SystemData<'a>;
     type Output: 'static + Component + Send + Sync;
-    type LoadResult: 'static + Sized + Send;
 
-    /// Load the data from given json value. The data is used in the integration process to be converted into
-    /// actual component. Can be component itself or other middle representation. The process is async.
-    fn load(&mut self, data: Value, system_data: &mut Self::SystemData) -> Pin<Box<dyn Future<Output = Self::LoadResult> + Send + Sync>>;
-
-    /// Convert the load result into component, which will be later inserted into the storage.
-    fn integrate(&mut self, load_result: Self::LoadResult, ctx: ComponentPostIntegrateContext) -> Self::Output;
+    fn load_async(&mut self, ctx: ComponentLoadArgs, system_data: &mut Self::SystemData) -> Pin<Box<dyn Future<Output = Self::Output> + Send + Sync>>;
 
     /// Get type name literal used in json representation.
     /// We can use std::any::type_name, but that has no stability guarantee.
@@ -143,17 +114,14 @@ impl<'a, T> ComponentS11n<'a> for DefaultS11n<T>
 {
     type SystemData = ();
     type Output = T;
-    type LoadResult = T;
 
-    fn load(&mut self, data: Value, _: &mut Self::SystemData) -> Pin<Box<dyn Future<Output=T> + Send + Sync>> {
-        let ret: T = serde_json::from_value(data).unwrap();
+    fn load_async(&mut self, ctx: ComponentLoadArgs, _: &mut Self::SystemData)
+        -> Pin<Box<dyn Future<Output=Self::Output> + Send + Sync>> {
+        let v = ctx.data;
         Box::pin(async move {
+            let ret: T = serde_json::from_value(v).unwrap();
             ret
         })
-    }
-
-    fn integrate(&mut self, instance: Self::Output, _: ComponentPostIntegrateContext) -> T {
-        instance
     }
 
     fn type_name(&self) -> &'static str {
@@ -161,14 +129,14 @@ impl<'a, T> ComponentS11n<'a> for DefaultS11n<T>
     }
 }
 
-pub struct ComponentStagingData<T> where T: Send {
+pub struct ComponentStagingData<T> where T: Component {
     staging_components: HashMap<(u32, usize), Arc<Mutex<Poll<T>>>>,
     #[allow(dead_code)]
     thread_pool: ThreadPool
 }
 
-impl<T: Send> ComponentStagingData<T> {
-    pub fn new() -> Self {
+impl<T: Component> Default for ComponentStagingData<T> {
+    fn default() -> Self {
         Self {
             staging_components: HashMap::new(),
             thread_pool: ThreadPool::new().unwrap()
@@ -182,7 +150,7 @@ impl<'a, T> System<'a> for ComponentS11nSystem<T>
     where T: ComponentS11n<'a> {
     type SystemData = (
         WriteExpect<'a, ProtoLoadContexts>,
-        WriteExpect<'a, ComponentStagingData<T::LoadResult>>,
+        Write<'a, ComponentStagingData<T::Output>>,
         WriteStorage<'a, T::Output>,
         T::SystemData);
 
@@ -199,7 +167,11 @@ impl<'a, T> System<'a> for ComponentS11nSystem<T>
                             // TODO: Useless and expensive clone
                             let temp_value = v.clone();
 
-                            let fut = self.0.load(temp_value, &mut data);
+                            let fut = self.0.load_async(ComponentLoadArgs {
+                                data: temp_value,
+                                entity_idx: idx,
+                                all_entity_vec: &entry.entities
+                            }, &mut data);
                             // https://github.com/rust-lang/rust/issues/71723
                             // 下面是预期的真正的async load代码，但是遇到了个奇怪的编译器报错，
                             //     | ...                   staging_data.thread_pool.spawn_ok(async move {}
@@ -242,12 +214,7 @@ impl<'a, T> System<'a> for ComponentS11nSystem<T>
                                 .unwrap();
 
                             match result {
-                                Poll::Ready(load_data) => {
-                                    let cmpt = self.0.integrate(load_data, ComponentPostIntegrateContext {
-                                        self_idx: idx,
-                                        entity_vec: &entry.entities,
-                                        request_idx: entry.idx
-                                    });
+                                Poll::Ready(cmpt) => {
                                     cmpt_write.insert(e, cmpt).unwrap();
                                 }
                                 _ => unreachable!()
@@ -266,12 +233,62 @@ impl<'a, T> System<'a> for ComponentS11nSystem<T>
     }
 }
 
-struct EntityLoadSystem;
+struct EntityLoadSystem {
+    counter: u32
+}
+
+impl EntityLoadSystem {
+    pub fn new() -> Self {
+        Self {
+            counter: 0
+        }
+    }
+}
 
 impl<'a> System<'a> for EntityLoadSystem {
-    type SystemData = (WriteExpect<'a, ProtoLoadContexts>, Entities<'a>);
+    type SystemData = (WriteExpect<'a, ProtoLoadRequests>, WriteExpect<'a, ProtoLoadContexts>, Entities<'a>);
 
-    fn run(&mut self, (mut proto_loads, entities): Self::SystemData) {
+    fn run(&mut self, (mut requests, mut proto_loads, entities): Self::SystemData) {
+        requests.drain(..)
+            .for_each(|req| {
+                let s: String = load_asset(&req.path).unwrap();
+                let value: Value = serde_json::from_str(&s).unwrap();
+
+                let loading_entities = match value {
+                    Value::Array(v) => {
+                        v.into_iter()
+                            .map(|entity_value| {
+                                match entity_value {
+                                    Value::Object(m) => {
+                                        let mut components = HashMap::new();
+                                        for (k, v) in m {
+                                            components.insert(k, ComponentLoadState::Init(v));
+                                        }
+                                        LoadingEntity {
+                                            components,
+                                        }
+                                    }
+                                    _ => panic!("Invalid entity data type, expecting object")
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    }
+                    _ => panic!("Invalid root type")
+                };
+                let entity_count = loading_entities.len();
+
+                let arc = Arc::new(Mutex::new( Poll::Pending ));
+                let ctx = ProtoLoadContext {
+                    idx: self.counter,
+                    loading_entities,
+                    result: arc.clone(),
+                    state: ProtoLoadState::ComponentLoad,
+                    entities: (0..entity_count).map(|_| entities.create()).collect()
+                };
+                proto_loads.v.push(ctx);
+                self.counter += 1;
+            });
+
         for ctx in &mut proto_loads.v {
             match ctx.state {
                 ProtoLoadState::ComponentLoad => {
@@ -306,64 +323,24 @@ impl<'a> System<'a> for EntityLoadSystem {
     }
 }
 
-// pub struct ProtoLoadContext<'a, Extras> {
-//     pub entities: &'a Vec<Entity>,
-//     pub resource_mgr: &'a mut ResManager,
-//     pub extras: &'a mut Extras
-// }
-//
-// pub struct ProtoStoreContext<'a, Extras> {
-//     pub entity_to_index: &'a HashMap<Entity, usize>,
-//     pub resource_mgr: &'a ResManager,
-//     pub extras: &'a Extras,
-// }
-//
-// pub trait ComponentS11n<Extras> {
-//     fn load(data: Value, ctx: &mut ProtoLoadContext<Extras>) -> Self;
-//     fn store(&self, ctx: &ProtoStoreContext<Extras>) -> Value;
-// }
-//
-// impl<T: Serialize + DeserializeOwned + Clone, Extras> ComponentS11n<Extras> for T {
-//     fn load(data: Value, _: &mut ProtoLoadContext<Extras>) -> Self {
-//         serde_json::from_value(data).unwrap()
-//     }
-//
-//     fn store(&self, _: &ProtoStoreContext<Extras>) -> Value {
-//         serde_json::to_value(self.clone()).expect(&format!("Serialize {} failed", std::any::type_name::<T>()))
-//     }
-// }
-//
-//
-// impl ProtoLoadRequest {
-//
-//     pub fn new(path: &str) -> Self {
-//         Self {
-//             path: path.to_string(),
-//             result: Arc::new(Mutex::new(Poll::Pending))
-//         }
-//     }
-//
-// }
-//
-// pub type ProtoLoadRequests = Vec<ProtoLoadRequest>;
-//
-// /// A request to store the given entity in the given asset path.
-// pub struct ProtoStoreRequest {
-//     pub entity_vec: Vec<Entity>,
-//     pub path: String,
-//     pub result: Arc<Mutex<Poll<std::io::Result<()>>>>
-// }
-//
-// impl ProtoStoreRequest {
-//
-//     pub fn new(entities: &Vec<Entity>, path: &str) -> Self {
-//         Self {
-//             entity_vec: entities.clone(),
-//             path: path.to_string(),
-//             result: Arc::new(Mutex::new(Poll::Pending))
-//         }
-//     }
-//
-// }
-//
-// pub type ProtoStoreRequests = Vec<ProtoStoreRequest>;
+pub(super) struct ProtoModule;
+
+impl Module for ProtoModule {
+    fn init(&self, ctx: &mut InitContext) {
+        ctx.init_data.world.insert(ProtoLoadRequests::new());
+        ctx.init_data.world.insert(ProtoLoadContexts::new());
+
+        ctx.dispatch(InsertInfo::new(DEP_PROTO_LOAD), |_, i| i.insert(EntityLoadSystem::new()));
+    }
+}
+
+pub trait InitContextProtoExt {
+    fn add_component_s11n<T: 'static + for<'a> ComponentS11n<'a> + Send>(&mut self, s11n: T);
+}
+
+impl InitContextProtoExt for super::InitContext {
+    fn add_component_s11n<T: 'static + for<'a> ComponentS11n<'a> + Send>(&mut self, s11n: T) {
+        self.dispatch(InsertInfo::default().after(&[DEP_PROTO_LOAD]),
+            |_, i| i.insert(ComponentS11nSystem(s11n)));
+    }
+}

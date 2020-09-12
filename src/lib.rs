@@ -377,7 +377,7 @@ impl RuntimeBuilder {
 
         Self {
             name: String::from(name),
-            modules: vec![]
+            modules: Self::_default_modules()
         }
     }
 
@@ -401,6 +401,12 @@ impl RuntimeBuilder {
             }
         }
         existing_modules
+    }
+
+    fn _default_modules() -> Vec<Box<dyn Module>> {
+        vec![
+            Box::new(proto::ProtoModule)
+        ]
     }
 
     pub fn build(mut self) -> Runtime {
@@ -469,11 +475,11 @@ impl RuntimeBuilder {
         dispatcher_builder.add(HierarchySystem::<HasParent>::new(&mut init_ctx.init_data.world), "", &[]);
 
         // Default serialized components
-        init_ctx.init_data.world.insert(proto::ComponentStagingData::<ecs::Transform>::new());
-        dispatcher_builder.add(proto::ComponentS11nSystem(proto::DefaultS11n::<ecs::Transform>::new("Transform")),
-                               "", &[]);
-        init_ctx.init_data.world.insert(proto::ComponentStagingData::<ecs::HasParentS11nData>::new());
-        dispatcher_builder.add(proto::ComponentS11nSystem(ecs::HasParentS11n), "", &[]);
+        {
+            use proto::InitContextProtoExt;
+            init_ctx.add_component_s11n(proto::DefaultS11n::<ecs::Transform>::new("Transform"));
+            init_ctx.add_component_s11n(ecs::HasParentS11n);
+        }
 
         // Module init
         for game_module in &mut self.modules {
@@ -488,7 +494,6 @@ impl RuntimeBuilder {
         // Default resources
         world.insert(Time::default());
         world.insert(RawInputData::new());
-        world.insert(proto::ProtoLoadContexts::new());
 
         let mut window_info = WindowInfo::new();
         let screen_size = client_data.window.inner_size();
