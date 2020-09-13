@@ -474,16 +474,16 @@ impl RuntimeBuilder {
         // Default systems
         dispatcher_builder.add(HierarchySystem::<HasParent>::new(&mut init_ctx.init_data.world), "", &[]);
 
+        // Module init
+        for game_module in &mut self.modules {
+            game_module.init(&mut init_ctx);
+        }
+
         // Default serialized components
         {
             use proto::InitContextProtoExt;
             init_ctx.add_component_s11n(proto::ComponentS11nDefault::<ecs::Transform>::new("Transform"));
             init_ctx.add_component_s11n(ecs::HasParentS11n);
-        }
-
-        // Module init
-        for game_module in &mut self.modules {
-            game_module.init(&mut init_ctx);
         }
 
         let mut world = init_ctx.post_dispatch(&mut dispatcher_builder);

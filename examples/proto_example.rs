@@ -7,7 +7,6 @@ use specs::prelude::*;
 use mu::ecs::Transform;
 use mu::util::Color;
 use mu::proto::*;
-use mu::proto_default::DefaultSerializeModule;
 use std::task::Poll;
 use std::sync::{Mutex, Arc};
 use imgui::*;
@@ -81,7 +80,6 @@ fn main() {
         .add_game_module(GraphicsModule)
         .add_game_module(SpriteModule)
         .add_game_module(MyModule)
-        .add_game_module(DefaultSerializeModule)
         .add_game_module(EditorModule { asset_path: None })
         .build();
 

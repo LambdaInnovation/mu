@@ -1,24 +1,28 @@
+use std::collections::HashMap;
 use std::io;
 
+use bytemuck::__core::pin::Pin;
+use futures::Future;
+use imgui_inspect_derive::Inspect;
+use serde::{Deserialize, Serialize};
 use serde_json;
-use serde::{Serialize, Deserialize};
-use specs::prelude::*;
+use serde_json::Value;
 use specs::Join;
+use specs::prelude::*;
+use wgpu::util::DeviceExt;
 
 use crate::*;
 use crate::asset::*;
+use crate::client::editor::asset_editor::AssetInspectorResources;
 use crate::client::graphics::*;
 use crate::client::graphics;
 use crate::ecs::Transform;
 use crate::math::*;
+use crate::proto::*;
+use crate::resource::{ResManager, ResourceRef};
 use crate::util::Color;
-use crate::resource::{ResourceRef, ResManager};
-use std::collections::HashMap;
-use serde_json::Value;
-use imgui_inspect_derive::Inspect;
+
 use super::editor::inspect::*;
-use crate::client::editor::asset_editor::{AssetInspectorResources};
-use wgpu::util::DeviceExt;
 
 #[derive(Serialize, Clone, Deserialize, Inspect)]
 pub struct SpriteConfig {
@@ -93,7 +97,7 @@ pub struct SpriteRef {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SpriteRefS11n {
+pub struct SpriteRefS11nData {
     pub sheet: String,
     pub idx: usize
 }
@@ -114,25 +118,33 @@ impl SpriteRef {
 
 }
 
-// impl<Extras: DefaultExtras> ComponentS11n<Extras> for SpriteRef {
-//     fn load(v: Value, ctx: &mut ProtoLoadContext<Extras>) -> Self {
-//         let s11n: SpriteRefS11n = serde_json::from_value(v).unwrap();
-//         let sheet = load_sprite_sheet(ctx.resource_mgr, ctx.extras.wgpu_state(), &s11n.sheet).unwrap();
-//         SpriteRef::new(&sheet, s11n.idx)
-//     }
-//
-//     fn store(&self, ctx: &ProtoStoreContext<Extras>) -> Value {
-//         let sheet = ctx.resource_mgr.get(&self.sheet);
-//         let sheet_path = sheet.path.clone().expect("No SpriteSheet path");
-//
-//         let s11n = SpriteRefS11n {
-//             sheet: sheet_path,
-//             idx: self.idx
-//         };
-//
-//         serde_json::to_value(s11n).unwrap()
-//     }
-// }
+#[derive(Clone)]
+pub struct SpriteRefS11n;
+
+type SpriteRefS11nSystemData<'a> = (WriteExpect<'a, ResManager>, ReadExpect<'a, WgpuState>);
+type SpriteRefS11nStoreSystemData<'a> = ReadExpect<'a, ResManager>;
+
+impl SpriteRefS11n {
+
+    fn load(&mut self, data: Value, (res_mgr, wgpu_state): &mut SpriteRefS11nSystemData) -> SpriteRef {
+        let s11n: SpriteRefS11nData = serde_json::from_value(data).unwrap();
+        let sheet = load_sprite_sheet(&mut *res_mgr, &*wgpu_state, &s11n.sheet).unwrap();
+        SpriteRef::new(&sheet, s11n.idx)
+    }
+
+    fn store(&mut self, sprite_ref: &SpriteRef, res_mgr: &mut SpriteRefS11nStoreSystemData) -> Value {
+        let sheet = res_mgr.get(&sprite_ref.sheet);
+        let sheet_path = sheet.path.clone().expect("No SpriteSheet path");
+
+        let s11n = SpriteRefS11nData {
+            sheet: sheet_path,
+            idx: sprite_ref.idx
+        };
+
+        serde_json::to_value(s11n).unwrap()
+    }
+
+}
 
 pub fn load_sprite_sheet(res_mgr: &mut ResManager, wgpu_state: &WgpuState, path: &str) -> io::Result<ResourceRef<SpriteSheet>> {
     let key = get_path_hash(path);
@@ -191,30 +203,47 @@ impl Component for SpriteRenderer {
     type Storage = VecStorage<Self>;
 }
 
-// impl<Extras> ComponentS11n<Extras> for SpriteRenderer where Extras: DefaultExtras {
-//     fn load(mut data: Value, ctx: &mut ProtoLoadContext<Extras>) -> Self {
-//         let color: Color = ComponentS11n::load(data["color"].take(), ctx);
-//         let sprite_ref = ComponentS11n::load(data["sprite"].take(), ctx);
-//
-//         Self {
-//             color,
-//             sprite: sprite_ref,
-//             material: None
-//         }
-//     }
-//
-//     fn store(&self, ctx: &ProtoStoreContext<Extras>) -> Value {
-//         serde_json::json!({
-//             "color": ComponentS11n::store(&self.color, ctx),
-//             "sprite": ComponentS11n::store(&self.sprite, ctx)
-//         })
-//     }
-// }
+#[derive(Clone)]
+struct SpriteRendererS11n;
+
+impl<'a> ComponentS11n<'a> for SpriteRendererS11n {
+    type SystemData = SpriteRefS11nSystemData<'a>;
+    type StoreSystemData = SpriteRefS11nStoreSystemData<'a>;
+    type Output = SpriteRenderer;
+
+    fn load_async(&mut self, mut ctx: ComponentLoadArgs, system_data: &mut Self::SystemData) -> Pin<Box<dyn Future<Output=Self::Output> + Send + Sync>> {
+        let color: Color = serde_json::from_value(ctx.data["color"].take()).unwrap();
+        let sprite_ref = SpriteRefS11n.load(ctx.data["sprite"].take(), system_data);
+
+        Box::pin(async move {
+            SpriteRenderer {
+                sprite: sprite_ref,
+                material: None,
+                color
+            }
+        })
+    }
+
+    fn store(&mut self, ctx: ComponentStoreArgs<Self::Output>, system_data: &mut Self::StoreSystemData) -> Value {
+        let color_value = serde_json::to_value(ctx.component.color).unwrap();
+        let sprite_ref_value = SpriteRefS11n.store(&ctx.component.sprite, system_data);
+        serde_json::json!({
+            "color": color_value,
+            "sprite": sprite_ref_value
+        })
+    }
+
+    fn type_name(&self) -> &'static str {
+        "SpriteRenderer"
+    }
+}
 
 pub struct SpriteModule;
 
 impl Module for SpriteModule {
     fn init(&self, ctx: &mut InitContext) {
+        ctx.add_component_s11n(SpriteRendererS11n);
+
         ctx.dispatch_thread_local(
         InsertInfo::new("sprite")
                 .before(&[graphics::DEP_CAM_DRAW_TEARDOWN])
@@ -531,15 +560,18 @@ impl<'a> System<'a> for SpriteRenderSystem {
 }
 
 pub(super) mod editor {
-    use super::*;
     use std::path::PathBuf;
-    use specs_derive::Component;
-    use crate::client::editor as meditor;
+
+    use image::GenericImageView;
     use imgui;
-    use imgui::{im_str};
+    use imgui::im_str;
+    use specs_derive::Component;
+
+    use crate::client::editor as meditor;
     use crate::client::editor::asset_editor::*;
     use crate::client::editor::EditorUIResources;
-    use image::GenericImageView;
+
+    use super::*;
 
     #[derive(Component)]
     #[storage(HashMapStorage)]
@@ -565,7 +597,8 @@ pub(super) mod editor {
         type SystemData = (
             WriteStorage<'a, SpriteSheetEditor>,
             WriteExpect<'a, EditorUIResources>,
-            WriteExpect<'a, AssetEditorEvents>,
+            // ! 当前module并没有能力判断 editor system 是否设置asset path，因此这个resource有可能没有被添加，故没有用ReadExpect. 其实比较绕，可以优化下
+            Write<'a, AssetEditorEvents>,
             ReadExpect<'a, WgpuState>,
             Entities<'a>);
 

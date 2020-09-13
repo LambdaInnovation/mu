@@ -115,10 +115,12 @@ struct HasParentS11nData {
     entity_ix: usize
 }
 
+#[derive(Clone)]
 pub struct HasParentS11n;
 
 impl ComponentS11n<'_> for HasParentS11n {
     type SystemData = ();
+    type StoreSystemData = ();
     type Output = HasParent;
 
     fn load_async(&mut self, ctx: ComponentLoadArgs, _: &mut Self::SystemData) -> Pin<Box<dyn Future<Output=Self::Output> + Send + Sync>> {
@@ -129,6 +131,20 @@ impl ComponentS11n<'_> for HasParentS11n {
                 parent: ent
             }
         })
+    }
+
+    fn store(&mut self, ctx: ComponentStoreArgs<Self::Output>, _: &mut Self::StoreSystemData) -> serde_json::Value {
+        let ix = ctx.all_entity_vec.iter()
+            .enumerate()
+            .find_map(|(idx, e)|
+                if *e == ctx.component.parent { Some(idx) }
+                else { None })
+            .expect("Failed to find parent in serializing entities");
+
+        let s11n = HasParentS11nData {
+            entity_ix: ix
+        };
+        serde_json::to_value(s11n).unwrap()
     }
 
     fn type_name(&self) -> &'static str { "HasParent" }
