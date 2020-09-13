@@ -48,7 +48,7 @@ impl<'a> Insert<'a> {
         where
             T: for<'x> specs::System<'x> + Send + 'static,
     {
-        info!("insert {}({})", self.name, std::any::type_name::<T>());
+        info!("system {}({})", self.name, std::any::type_name::<T>());
         self.builder.add(system, self.name, self.deps);
     }
 }
@@ -66,7 +66,7 @@ impl<'a> InsertThreadLocal<'a> {
         where
             T: for<'x> specs::RunNow<'x> + 'static,
     {
-        info!("insert_thread_local {}({})", self.name, std::any::type_name::<T>());
+        info!("system_local {}({})", self.name, std::any::type_name::<T>());
         self.builder.add_thread_local(system);
     }
 
@@ -297,7 +297,6 @@ impl InitContext {
     {
         assert_eq!(info.order, 0, "Doesn't allow custom order");
         assert!(info.before_deps.is_empty(), "Doesn't allow before_deps");
-        info!("dispatch? {}", info.name);
         self.group_normal.dispatch(info, func);
     }
 
@@ -382,6 +381,7 @@ impl RuntimeBuilder {
     }
 
     pub fn add_game_module<T: Module + 'static>(mut self, game_module: T) -> Self {
+        info!("add_game_module {}({})", game_module.name(), std::any::type_name::<T>());
         self.add_game_module_impl(Box::new(game_module));
         self
     }
