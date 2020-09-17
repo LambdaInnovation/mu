@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io;
+use std::pin::Pin;
 
-use bytemuck::__core::pin::Pin;
 use futures::Future;
 use imgui_inspect_derive::Inspect;
 use serde::{Deserialize, Serialize};
@@ -572,6 +572,7 @@ pub(super) mod editor {
     use crate::client::editor::EditorUIResources;
 
     use super::*;
+    use imgui_inspect::InspectArgsDefault;
 
     #[derive(Component)]
     #[storage(HashMapStorage)]
@@ -580,7 +581,8 @@ pub(super) mod editor {
         path: PathBuf,
         texture_size: Vec2,
         texture_id: imgui::TextureId,
-        activated: bool
+        activated: bool,
+        selected_sprite_id: Option<usize>
     }
 
     #[derive(Clone)]
@@ -610,6 +612,8 @@ pub(super) mod editor {
                 .collect();
 
             meditor::with_frame(|ui| {
+                use imgui::*;
+                let mut id = 0;
                 for (entity, editor) in (&entities, &mut editors).join() {
                     // Remove already-have requests, active associated windows
                     if let Some((idx, _)) = requests.iter().enumerate()
@@ -618,23 +622,88 @@ pub(super) mod editor {
                         requests.remove(idx);
                     }
 
+                    let id_token = ui.push_id(id);
+
+                    const LEFT_WIDTH: f32 = 180.;
                     let mut opened = true;
                     imgui::Window::new(&im_str!("Sprite Editor"))
                         .opened(&mut opened)
                         .build(ui, || {
-                            let [ww, wh] = ui.content_region_avail();
-                            let img_aspect: f32 = editor.texture_size.x / editor.texture_size.y;
-                            let width = f32::min(ww, wh * img_aspect);
-                            let height = width / img_aspect;
+                            const EDIT_AREA_HEIGHT: f32 = 150.;
+                            let [_, avail_height] = ui.content_region_avail();
+                            let select_area_height = match &editor.selected_sprite_id {
+                                Some(_) => avail_height - EDIT_AREA_HEIGHT,
+                                _ => avail_height
+                            };
+                            ChildWindow::new(Id::Str("left"))
+                                .size([LEFT_WIDTH, select_area_height])
+                                .build(ui, || {
+                                    let config = &editor.config;
+                                    let ref mut selected_idx = editor.selected_sprite_id;
+                                    config.sprites.iter()
+                                        .enumerate()
+                                        .for_each(|(i, x)| {
+                                            TreeNode::new(&im_str!("{}", x.name))
+                                                .leaf(true)
+                                                .selected(Some(i) == *selected_idx)
+                                                .build(ui, || {
+                                                    if ui.is_item_clicked(MouseButton::Left) {
+                                                        *selected_idx = Some(i);
+                                                    }
+                                                });
+                                        });
+                                });
+                            ui.same_line(LEFT_WIDTH);
 
-                            imgui::Image::new(editor.texture_id, [width, height])
-                                .build(ui);
-                            // imgui::Image::new()
+                            ChildWindow::new(Id::Str("right"))
+                                .build(ui, || {
+                                    let [ww, wh] = ui.content_region_avail();
+                                    let img_aspect: f32 = editor.texture_size.x / editor.texture_size.y;
+                                    let width = f32::min(ww, wh * img_aspect);
+                                    let height = width / img_aspect;
+
+                                    let texture_world_pos: Vec2 = ui.cursor_screen_pos().into();
+
+                                    Image::new(editor.texture_id, [width, height])
+                                        .build(ui);
+
+                                    if let Some(idx) = editor.selected_sprite_id {
+                                        let sprite_config: &SpriteConfig = &editor.config.sprites[idx];
+                                        let size_scl = width / editor.texture_size.x;
+                                        let pos1 = texture_world_pos + size_scl * (sprite_config.pos - sprite_config.size * 0.5);
+                                        let pos2 = texture_world_pos + size_scl * (sprite_config.pos + sprite_config.size * 0.5);
+                                        ui.get_window_draw_list()
+                                            .add_rect(pos1.into(),
+                                                      pos2.into(), [0.5, 0.7, 1., 1.])
+                                            .thickness(3.)
+                                            .build();
+                                    }
+                                });
+
+                            if let Some(idx) = editor.selected_sprite_id {
+                                ui.set_cursor_pos([0., avail_height - EDIT_AREA_HEIGHT]);
+                                let style_token = ui.push_style_var(StyleVar::ChildRounding(5.0));
+                                ChildWindow::new(Id::Str("editor"))
+                                    .border(true)
+                                    .size([LEFT_WIDTH, EDIT_AREA_HEIGHT])
+                                    .build(ui, || {
+                                        use imgui_inspect::InspectRenderDefault;
+                                        let sprite_config: &mut SpriteConfig = &mut editor.config.sprites[idx];
+                                        SpriteConfig::render_mut(&mut [sprite_config], "", ui, &InspectArgsDefault {
+                                            header: None,
+                                            .. Default::default()
+                                        });
+                                    });
+                                style_token.pop(ui);
+                            }
                         });
 
                     if !opened {
                         entities.delete(entity).unwrap();
                     }
+
+                    id += 1;
+                    id_token.pop(ui);
                 }
             });
 
@@ -652,7 +721,8 @@ pub(super) mod editor {
                         path: path,
                         texture_id,
                         activated: true,
-                        texture_size: vec2(w as f32, h as f32)
+                        texture_size: vec2(w as f32, h as f32),
+                        selected_sprite_id: None
                     };
 
                     let ent = entities.create();
