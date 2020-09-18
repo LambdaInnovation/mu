@@ -653,7 +653,7 @@ pub(super) mod editor {
                     let SpriteSheetEditor {
                         window_name,
                         config,
-                        // path,
+                        path,
                         texture_size,
                         texture_id,
                         activated,
@@ -782,6 +782,14 @@ pub(super) mod editor {
                     }
                     if *activated {
                         *activated = false;
+                    }
+                    if edit_state.should_save() {
+                        edit_state.mark_clean();
+                        let s = serde_json::to_string_pretty(&config).unwrap();
+                        let write_path = asset::get_fs_path(path.to_str().unwrap());
+                        std::fs::write(write_path, s).expect("Failed writing to config");
+
+                        info!("Write to {}", path.to_str().unwrap());
                     }
 
                     id += 1;
