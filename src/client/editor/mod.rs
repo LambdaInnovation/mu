@@ -198,6 +198,34 @@ impl<'a> System<'a> for EditorUITeardownSystem {
     }
 }
 
+#[derive(Copy, Clone)]
+pub enum EditState {
+    Clean,
+    Dirty(Instant)
+}
+
+impl EditState {
+
+    pub fn should_save(&mut self) -> bool {
+        const THRESHOLD: f32 = 1.0;
+        if let EditState::Dirty(instant) = *self {
+            if (Instant::now() - instant).as_secs_f32() > THRESHOLD {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn mark_clean(&mut self) {
+        *self = EditState::Clean;
+    }
+
+    pub fn mark_dirty(&mut self) {
+        *self = EditState::Dirty(Instant::now());
+    }
+
+}
+
 pub struct EditorModule {
     pub asset_path: Option<String>, // Path to /asset folder of a project. If not set, editor-only features will be disabled.
 }

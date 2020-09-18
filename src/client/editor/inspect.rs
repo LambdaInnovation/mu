@@ -1,8 +1,9 @@
-use imgui_inspect::{InspectRenderDefault, InspectArgsDefault};
+use imgui_inspect::{InspectRenderDefault, InspectArgsDefault, InspectRenderSlider, InspectArgsSlider};
 use crate::math::*;
 use imgui::*;
 use serde::export::PhantomData;
 use strum::*;
+use cgmath::Vector2;
 
 pub struct VecDefaultInspect<T, U = T> where U: InspectRenderDefault<T> {
     marker: PhantomData<(T, U)>,
@@ -69,6 +70,60 @@ impl InspectRenderDefault<Vec2> for Vec2DefaultInspect {
         let mut tmp_arr: [f32; 2] = (*data[0]).into();
         if ui.input_float2(&im_str!("{}", label), &mut tmp_arr).build() {
             *data[0] = vec2(tmp_arr[0], tmp_arr[1]);
+            return true
+        }
+
+        false
+    }
+}
+
+impl InspectRenderSlider<Vec2> for Vec2DefaultInspect {
+    fn render(_: &[&Vec2], _: &'static str, _: &Ui, _: &InspectArgsSlider) {
+        unimplemented!()
+    }
+
+    fn render_mut(data: &mut [&mut Vec2], label: &'static str, ui: &Ui, _args: &InspectArgsSlider) -> bool {
+        assert_eq!(data.len(), 1, "Rendering >1 items not supported yet");
+
+        let mut tmp_arr: [f32; 2] = (*data[0]).into();
+        if ui.drag_float2(&im_str!("{}", label), &mut tmp_arr).build() {
+            *data[0] = vec2(tmp_arr[0], tmp_arr[1]);
+            return true
+        }
+
+        false
+    }
+}
+
+impl InspectRenderDefault<cgmath::Vector2<i32>> for Vec2DefaultInspect {
+    fn render(_: &[&Vector2<i32>], _: &'static str, _: &Ui, _: &InspectArgsDefault) {
+        unimplemented!()
+    }
+
+    fn render_mut(data: &mut [&mut Vector2<i32>], label: &'static str, ui: &Ui, _args: &InspectArgsDefault) -> bool {
+        assert_eq!(data.len(), 1, "Rendering >1 items not supported yet");
+
+        let mut tmp_arr: [i32; 2] = (*data[0]).into();
+        if ui.input_int2(&im_str!("{}", label), &mut tmp_arr).build() {
+            *data[0] = tmp_arr.into();
+            return true
+        }
+
+        false
+    }
+}
+
+impl InspectRenderSlider<cgmath::Vector2<i32>> for Vec2DefaultInspect {
+    fn render(_: &[&Vector2<i32>], _: &'static str, _: &Ui, _: &InspectArgsSlider) {
+        unimplemented!()
+    }
+
+    fn render_mut(data: &mut [&mut Vector2<i32>], label: &'static str, ui: &Ui, _: &InspectArgsSlider) -> bool {
+        assert_eq!(data.len(), 1, "Rendering >1 items not supported yet");
+
+        let mut tmp_arr: [i32; 2] = (*data[0]).into();
+        if ui.drag_int2(&im_str!("{}", label), &mut tmp_arr).build() {
+            *data[0] = tmp_arr.into();
             return true
         }
 

@@ -28,20 +28,32 @@ use super::editor::inspect::*;
 pub struct SpriteConfig {
     name: String,
     #[inspect(proxy_type="Vec2DefaultInspect")]
-    pos: Vec2,  // Center of the sprite, in pixel coordinates
+    pos: cgmath::Vector2<i32>,  // Center of the sprite, in pixel coordinates
     #[inspect(proxy_type="Vec2DefaultInspect")]
-    size: Vec2, // Size of the image, in pixel coordinates
+    size: cgmath::Vector2<i32>, // Size of the image, in pixel coordinates
     #[inspect(proxy_type="Vec2DefaultInspect")]
     pivot: Vec2, // the pos of the pivot within the sprite (normalized 0-1 range)
+}
+
+impl SpriteConfig {
+
+    pub fn pos_f32(&self) -> Vec2 {
+        self.pos.cast().unwrap()
+    }
+
+    pub fn size_f32(&self) -> Vec2 {
+        self.size.cast().unwrap()
+    }
+
 }
 
 impl Default for SpriteConfig {
     fn default() -> Self {
         Self {
-            name: Default::default(),
-            pos: Vec2::zero(),
-            size: Vec2::zero(),
-            pivot: Vec2::zero(),
+            name: "Default".to_string(),
+            pos: Zero::zero(),
+            size: Zero::zero(),
+            pivot: vec2(0.5, 0.5),
         }
     }
 }
@@ -158,8 +170,10 @@ pub fn load_sprite_sheet(res_mgr: &mut ResManager, wgpu_state: &WgpuState, path:
 
         let sprites: Vec<Sprite> = (&config.sprites).into_iter()
             .map(|x| {
-                let tuv1: Vec2 = x.pos - x.size * 0.5;
-                let tuv2: Vec2 = x.pos + x.size * 0.5;
+                let pos_f32 = x.pos_f32();
+                let size_f32 = x.size_f32();
+                let tuv1: Vec2 = pos_f32 - size_f32 * 0.5;
+                let tuv2: Vec2 = pos_f32 + size_f32 * 0.5;
 
                 let u1 = tuv1.x / tex_width;
                 let v1 = tuv2.y / tex_height;
@@ -258,7 +272,7 @@ impl Module for SpriteModule {
                 InsertInfo::default()
                     .after(&[meditor::DEP_IMGUI_SETUP])
                     .before(&[meditor::DEP_IMGUI_TEARDOWN]),
-            |_, i| i.insert_thread_local(editor::SpriteSheetEditorSystem));
+            |_, i| i.insert_thread_local(editor::SpriteSheetEditorSystem::new()));
         }
     }
 
@@ -423,7 +437,7 @@ impl SpriteRenderSystem {
             .map(|x| {
                 let sprite_ref = &sheet.sprites[x.idx];
 
-                let sprite_scl: Vec2 = sprite_ref.config.size / (sheet.ppu as f32);
+                let sprite_scl: Vec2 = sprite_ref.config.size_f32() / (sheet.ppu as f32);
                 let sprite_offset: Vec2 = -(sprite_ref.config.pivot - math::vec2(0.5, 0.5));
                 let world_view: Mat4 = x.world_view *
                     Mat4::from_nonuniform_scale(sprite_scl.x, sprite_scl.y, 1.0) *
@@ -572,17 +586,19 @@ pub(super) mod editor {
     use crate::client::editor::EditorUIResources;
 
     use super::*;
-    use imgui_inspect::InspectArgsDefault;
 
     #[derive(Component)]
     #[storage(HashMapStorage)]
     pub struct SpriteSheetEditor {
+        window_name: imgui::ImString,
         config: SpriteSheetConfig,
         path: PathBuf,
         texture_size: Vec2,
         texture_id: imgui::TextureId,
         activated: bool,
-        selected_sprite_id: Option<usize>
+        selected_sprite_id: Option<usize>,
+        edit_drag: bool,
+        edit_state: meditor::EditState
     }
 
     #[derive(Clone)]
@@ -593,7 +609,15 @@ pub(super) mod editor {
         // }
     }
 
-    pub struct SpriteSheetEditorSystem;
+    pub struct SpriteSheetEditorSystem {
+        counter: u32, // 用来生成implicit editor name
+    }
+
+    impl SpriteSheetEditorSystem {
+        pub fn new() -> Self {
+            Self { counter: 0 }
+        }
+    }
 
     impl<'a> System<'a> for SpriteSheetEditorSystem {
         type SystemData = (
@@ -614,7 +638,7 @@ pub(super) mod editor {
             meditor::with_frame(|ui| {
                 use imgui::*;
                 let mut id = 0;
-                for (entity, editor) in (&entities, &mut editors).join() {
+                for (entity, mut editor) in (&entities, &mut editors).join() {
                     // Remove already-have requests, active associated windows
                     if let Some((idx, _)) = requests.iter().enumerate()
                         .find(|(_, x)| x.0 == editor.path) {
@@ -626,29 +650,57 @@ pub(super) mod editor {
 
                     const LEFT_WIDTH: f32 = 180.;
                     let mut opened = true;
-                    imgui::Window::new(&im_str!("Sprite Editor"))
+                    let SpriteSheetEditor {
+                        window_name,
+                        config,
+                        // path,
+                        texture_size,
+                        texture_id,
+                        activated,
+                        selected_sprite_id,
+                        edit_drag,
+                        edit_state,
+                        ..
+                    } = &mut editor;
+
+                    imgui::Window::new(&*window_name)
+                        .focused(*activated)
                         .opened(&mut opened)
                         .build(ui, || {
                             const EDIT_AREA_HEIGHT: f32 = 150.;
                             let [_, avail_height] = ui.content_region_avail();
-                            let select_area_height = match &editor.selected_sprite_id {
+                            let [_, init_y] = ui.cursor_pos();
+                            let select_area_height = match &selected_sprite_id {
                                 Some(_) => avail_height - EDIT_AREA_HEIGHT,
                                 _ => avail_height
                             };
                             ChildWindow::new(Id::Str("left"))
+                                .menu_bar(true)
                                 .size([LEFT_WIDTH, select_area_height])
                                 .build(ui, || {
-                                    let config = &editor.config;
-                                    let ref mut selected_idx = editor.selected_sprite_id;
+                                    ui.menu_bar(|| {
+                                        if MenuItem::new(im_str!("+")).build(ui) {
+                                            config.sprites.push(SpriteConfig::default());
+                                            edit_state.mark_dirty();
+                                        }
+                                        if let Some(ix) = *selected_sprite_id {
+                                            if MenuItem::new(im_str!("-")).build(ui) {
+                                                config.sprites.remove(ix);
+                                                *selected_sprite_id = None;
+                                                edit_state.mark_dirty();
+                                            }
+                                        }
+                                    });
+
                                     config.sprites.iter()
                                         .enumerate()
                                         .for_each(|(i, x)| {
                                             TreeNode::new(&im_str!("{}", x.name))
                                                 .leaf(true)
-                                                .selected(Some(i) == *selected_idx)
+                                                .selected(Some(i) == *selected_sprite_id)
                                                 .build(ui, || {
                                                     if ui.is_item_clicked(MouseButton::Left) {
-                                                        *selected_idx = Some(i);
+                                                        *selected_sprite_id = Some(i);
                                                     }
                                                 });
                                         });
@@ -658,20 +710,23 @@ pub(super) mod editor {
                             ChildWindow::new(Id::Str("right"))
                                 .build(ui, || {
                                     let [ww, wh] = ui.content_region_avail();
-                                    let img_aspect: f32 = editor.texture_size.x / editor.texture_size.y;
+                                    let img_aspect: f32 = texture_size.x / texture_size.y;
                                     let width = f32::min(ww, wh * img_aspect);
                                     let height = width / img_aspect;
 
                                     let texture_world_pos: Vec2 = ui.cursor_screen_pos().into();
 
-                                    Image::new(editor.texture_id, [width, height])
+                                    Image::new(*texture_id, [width, height])
                                         .build(ui);
 
-                                    if let Some(idx) = editor.selected_sprite_id {
-                                        let sprite_config: &SpriteConfig = &editor.config.sprites[idx];
-                                        let size_scl = width / editor.texture_size.x;
-                                        let pos1 = texture_world_pos + size_scl * (sprite_config.pos - sprite_config.size * 0.5);
-                                        let pos2 = texture_world_pos + size_scl * (sprite_config.pos + sprite_config.size * 0.5);
+                                    if let Some(idx) = selected_sprite_id {
+                                        let sprite_config: &SpriteConfig = &config.sprites[*idx];
+                                        let size_scl = width / texture_size.x;
+
+                                        let pos_f32 = sprite_config.pos_f32();
+                                        let size_f32 = sprite_config.size_f32();
+                                        let pos1 = texture_world_pos + size_scl * (pos_f32 - size_f32 * 0.5);
+                                        let pos2 = texture_world_pos + size_scl * (pos_f32 + size_f32 * 0.5);
                                         ui.get_window_draw_list()
                                             .add_rect(pos1.into(),
                                                       pos2.into(), [0.5, 0.7, 1., 1.])
@@ -680,19 +735,43 @@ pub(super) mod editor {
                                     }
                                 });
 
-                            if let Some(idx) = editor.selected_sprite_id {
-                                ui.set_cursor_pos([0., avail_height - EDIT_AREA_HEIGHT]);
+                            if let Some(idx) = selected_sprite_id {
+                                ui.set_cursor_pos([0., init_y + avail_height - EDIT_AREA_HEIGHT]);
                                 let style_token = ui.push_style_var(StyleVar::ChildRounding(5.0));
                                 ChildWindow::new(Id::Str("editor"))
+                                    .menu_bar(true)
                                     .border(true)
                                     .size([LEFT_WIDTH, EDIT_AREA_HEIGHT])
                                     .build(ui, || {
-                                        use imgui_inspect::InspectRenderDefault;
-                                        let sprite_config: &mut SpriteConfig = &mut editor.config.sprites[idx];
-                                        SpriteConfig::render_mut(&mut [sprite_config], "", ui, &InspectArgsDefault {
-                                            header: None,
-                                            .. Default::default()
+                                        ui.menu_bar(|| {
+                                            let s = match *edit_drag {
+                                                true => im_str!("drag"),
+                                                _ => im_str!("text")
+                                            };
+                                            let clicked = MenuItem::new(s).build(ui);
+                                            if clicked {
+                                                *edit_drag = !*edit_drag;
+                                            }
                                         });
+
+                                        use imgui_inspect::{InspectRenderDefault, InspectRenderSlider};
+                                        let sprite_config: &mut SpriteConfig = &mut config.sprites[*idx];
+
+                                        let mut changed = false;
+                                        changed |= String::render_mut(&mut [&mut sprite_config.name], "name", ui, &Default::default());
+                                        if !*edit_drag {
+                                            changed |= <Vec2DefaultInspect as InspectRenderDefault<_>>::render_mut(&mut [&mut sprite_config.pos], "pos", ui, &Default::default());
+                                            changed |= <Vec2DefaultInspect as InspectRenderDefault<_>>::render_mut(&mut [&mut sprite_config.size], "size", ui, &Default::default());
+                                            changed |= <Vec2DefaultInspect as InspectRenderDefault<_>>::render_mut(&mut [&mut sprite_config.pivot], "pivot", ui, &Default::default());
+                                        } else {
+                                            changed |= <Vec2DefaultInspect as InspectRenderSlider<_>>::render_mut(&mut [&mut sprite_config.pos], "pos", ui, &Default::default());
+                                            changed |= <Vec2DefaultInspect as InspectRenderSlider<_>>::render_mut(&mut [&mut sprite_config.size], "size", ui, &Default::default());
+                                            changed |= <Vec2DefaultInspect as InspectRenderSlider<_>>::render_mut(&mut [&mut sprite_config.pivot], "pivot", ui, &Default::default());
+                                        }
+
+                                        if changed {
+                                            edit_state.mark_dirty();
+                                        }
                                     });
                                 style_token.pop(ui);
                             }
@@ -701,10 +780,14 @@ pub(super) mod editor {
                     if !opened {
                         entities.delete(entity).unwrap();
                     }
+                    if *activated {
+                        *activated = false;
+                    }
 
                     id += 1;
                     id_token.pop(ui);
                 }
+
             });
 
             // Handle all new edit requests
@@ -715,16 +798,20 @@ pub(super) mod editor {
                     let (_, image) = load_texture_raw(&get_asset_path_local(&config._path, &config.texture));
                     let (w, h) = (image.width(), image.height());
                     let texture_id = ui_res.renderer.upload_texture(&wgpu_state.device, &wgpu_state.queue, &image.into_rgba().into_vec(), w, h, None);
-                    // let tex_config = load_as
+
                     let cmpt = SpriteSheetEditor {
                         config,
                         path: path,
                         texture_id,
                         activated: true,
                         texture_size: vec2(w as f32, h as f32),
-                        selected_sprite_id: None
+                        selected_sprite_id: None,
+                        window_name: imgui::im_str!("Sprite Editor###{}", self.counter),
+                        edit_drag: false,
+                        edit_state: meditor::EditState::Clean
                     };
 
+                    self.counter += 1;
                     let ent = entities.create();
                     editors.insert(ent, cmpt).unwrap();
                 });
