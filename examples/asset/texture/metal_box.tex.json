@@ -1,0 +1,7 @@
+{
+  "image": "metal_box.png",
+  "sampler": {
+    "address": "ClampToEdge",
+    "filter": "Bilinear"
+  }
+}
