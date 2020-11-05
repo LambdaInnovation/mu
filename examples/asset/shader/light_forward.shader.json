@@ -1,6 +1,6 @@
 {
-  "vertex": "triangle.vert",
-  "fragment": "triangle.frag",
+  "vertex": "light_forward.frag",
+  "fragment": "light_forward.vert",
   "uniform_layout": [
     {
       "binding": 0,
@@ -9,8 +9,8 @@
         "DataBlock": {
           "members": [
             [
-              "",
-              "Vec3"
+              "u_wvp",
+              "Mat4"
             ]
           ]
         }

@@ -503,7 +503,9 @@ impl InspectRenderDefault<UniformPropertyBinding> for UniformPropertyBinding {
         let mut changed = false;
 
         let binding = &mut data[0];
-        let mut name = im_str!("{}", binding.0);
+        let mut name: ImString = im_str!("{}", binding.0);
+        // FIXME: 这里输入会莫名出现 输入不进去的问题 需要细查 暂时先这么不稳定的解决
+        name.reserve(5);
 
         ui.columns(2, &im_str!("{}", label), false);
         if ui.input_text(im_str!("id"), &mut name).build() {
@@ -530,7 +532,7 @@ pub enum UniformProperty {
 impl UniformPropertyType {
 
     #[inline]
-    fn element_count(&self) -> usize {
+    pub fn element_count(&self) -> usize {
         match &self {
             Self::Float => 1,
             Self::Vec2 => 2,
