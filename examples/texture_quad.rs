@@ -47,7 +47,7 @@ impl DrawQuadSystem {
             QuadVertex::new(0.5, 0.5, 1., 0.)
         ];
 
-        let texture_view = texture.raw_texture.create_view(&Default::default());
+        let texture_view = texture.default_view;
 
         let vbo = wgpu_state.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
@@ -68,13 +68,13 @@ impl DrawQuadSystem {
             }
         );
 
-        let ubo_range = 0..std::mem::size_of::<[f32;16]>() as wgpu::BufferAddress;
+        // let ubo_range = 0..std::mem::size_of::<[f32;16]>() as wgpu::BufferAddress;
         let bind_group = wgpu_state.device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &program.bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer(ubo.slice(ubo_range))
+                    resource: wgpu::BindingResource::Buffer(ubo.slice(..))
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -190,8 +190,8 @@ impl<'a> System<'a> for UpdateCameraSystem {
 struct QuadModule;
 
 impl Module for QuadModule {
-    fn init(&self, init_data: &mut InitContext) {
-        init_data.dispatch(
+    fn init(&self, ctx: &mut InitContext) {
+        ctx.dispatch(
             InsertInfo::new("update_trans"),
             move |_, i| i.insert(UpdateCameraSystem));
 
@@ -199,7 +199,7 @@ impl Module for QuadModule {
             InsertInfo::new("quad")
                 .after(&[DEP_CAM_DRAW_SETUP])
                 .before(&[DEP_CAM_DRAW_TEARDOWN]);
-        init_data.dispatch_thread_local(
+        ctx.dispatch_thread_local(
             insert_info,
             move |init, i|
                 i.insert_thread_local(DrawQuadSystem::new(&*init.world.read_resource())));

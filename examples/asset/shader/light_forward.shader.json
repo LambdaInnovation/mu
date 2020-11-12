@@ -1,6 +1,6 @@
 {
-  "vertex": "light_forward.frag",
-  "fragment": "light_forward.vert",
+  "vertex": "light_forward.vert",
+  "fragment": "light_forward.frag",
   "uniform_layout": [
     {
       "binding": 0,
@@ -16,6 +16,18 @@
         }
       },
       "visibility": "Vertex"
+    },
+    {
+      "binding": 1,
+      "name": "tex",
+      "ty": "Texture",
+      "visibility": "Fragment"
+    },
+    {
+      "binding": 2,
+      "name": "smp",
+      "ty": "Sampler",
+      "visibility": "Fragment"
     }
   ]
 }
