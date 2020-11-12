@@ -23,7 +23,7 @@ specs = { version = "*", features = ["shred-derive"] }
 specs-hierarchy = "0.6"
 specs-derive = "0.4.1"
 
-cgmath = { version = "*", features = ["serde"] }
+cgmath = { version = "*", features = ["serde", "swizzle"] }
 rand = "*"
 image = "*"
 futures = { version = "*", features = ["thread-pool"] }

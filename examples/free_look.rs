@@ -4,7 +4,11 @@ use wgpu::util::DeviceExt;
 use specs::prelude::*;
 use mu::math::*;
 use mu::util::Color;
-use mu::ecs::Transform;
+use mu::ecs::{Transform, Time};
+use mu::client::input::{RawInputData, ButtonState};
+use mu::math::cgmath::Rotation3;
+use cgmath::InnerSpace;
+use winit::event::VirtualKeyCode;
 
 #[derive(Copy, Clone)]
 struct BoxVertex {
@@ -218,11 +222,62 @@ impl<'a> System<'a> for DrawBoxSystem {
     }
 }
 
+
+struct CameraControlSystem;
+
+impl<'a> System<'a> for CameraControlSystem {
+    type SystemData = (ReadExpect<'a, Time>, ReadExpect<'a, RawInputData>, WriteStorage<'a, Transform>, ReadStorage<'a, graphics::Camera>);
+
+    fn run(&mut self, (time, input, mut trans_write, cam_read): Self::SystemData) {
+        const ROTATE_SENSITIVITY: f32 = 0.01;
+        const MOVE_SENSITIVITY: f32 = 2.0;
+
+        let mouse_movement = input.mouse_frame_movement;
+
+        for (trans, _) in (&mut trans_write, &cam_read).join() {
+            let r: Quaternion = trans.rot;
+            let mut euler: cgmath::Euler<Rad> = r.into();
+            euler.x += cgmath::Rad(-ROTATE_SENSITIVITY * mouse_movement.x); // Yaw
+            euler.y += cgmath::Rad(-ROTATE_SENSITIVITY * mouse_movement.y); // Pitch
+            euler.z = Rad::zero();
+
+            let new_rot: Quaternion = euler.into();
+            // log::info!("{:?}", euler);
+
+            trans.rot = new_rot;
+
+            fn map_axis(bs: ButtonState, negate: bool) -> f32 {
+                if bs.is_down() {
+                    if negate { -1. } else { 1. }
+                } else {
+                    0.
+                }
+            }
+            let fwd_axis = map_axis(input.get_key(VirtualKeyCode::W), false) +
+                                map_axis(input.get_key(VirtualKeyCode::S), true);
+            let side_axis = map_axis(input.get_key(VirtualKeyCode::D), false) +
+                map_axis(input.get_key(VirtualKeyCode::A), true);
+            let axis = vec2(fwd_axis, side_axis);
+            if axis.magnitude2() > 0.1 {
+                let axis = axis.normalize();
+                let dt = time.get_delta_time();
+                let fwd = quat::get_forward_dir(trans.rot);
+                let right = quat::get_right_dir(trans.rot);
+                trans.pos += (axis.x * dt * MOVE_SENSITIVITY) * fwd;
+                trans.pos += (axis.y * dt * MOVE_SENSITIVITY) * right;
+                // trans.pos.z += 0.1 * dt;
+            }
+        }
+    }
+}
+
 struct MyModule;
 
 impl Module for MyModule {
 
     fn init(&self, ctx: &mut InitContext) {
+        ctx.dispatch(Default::default(), |_, i| i.insert(CameraControlSystem));
+
         let insert_info =
             InsertInfo::new("box")
                 .after(&[graphics::DEP_CAM_DRAW_SETUP])
