@@ -145,17 +145,11 @@ pub mod quat {
 
     pub fn get_forward_dir(q: Quaternion) -> Vec3 {
         let mut v = q * vec3(0., 0., -1.);
-        std::mem::swap(&mut v.x, &mut v.y);
-        v.x = -v.x;
-        v.y = -v.y;
         v
     }
 
     pub fn get_right_dir(q: Quaternion) -> Vec3 {
-        let mut v = q * vec3(0., -1., 0.);
-        std::mem::swap(&mut v.x, &mut v.y);
-        v.x = -v.x;
-        v.y = -v.y;
+        let mut v = q * vec3(1., 0., 0.);
         v
     }
 

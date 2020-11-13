@@ -882,25 +882,9 @@ mod internal {
                 //     .as_matrix()
                 //     .clone();
 
-                // yxz
-                let mut coord_swap_mat: Mat4 = cgmath::One::one();
-                coord_swap_mat.x[0] = 0.0;
-                coord_swap_mat.x[1] = 1.0;
-
-                coord_swap_mat.y[0] = 1.0;
-                coord_swap_mat.y[1] = 0.0;
-
-                // yxz
-                let mut coord_swap_mat_inv: Mat4 = cgmath::One::one();
-                coord_swap_mat_inv.x[0] = 0.0;
-                coord_swap_mat_inv.x[1] = 1.0;
-
-                coord_swap_mat_inv.y[0] = 1.0;
-                coord_swap_mat_inv.y[1] = 0.0;
-
                 let rot = Mat4::from(trans.rot);
                 //            rot[(3, 3)] = 1.0;
-                let world_view: Mat4 = coord_swap_mat_inv * rot * coord_swap_mat * math::Mat4::from_translation(-trans.pos) * coord_swap_mat;
+                let world_view: Mat4 = rot * math::Mat4::from_translation(-trans.pos);
 
                 let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some(&format!("Camera {}", cam_id)),

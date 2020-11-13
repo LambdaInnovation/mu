@@ -27,12 +27,18 @@ impl BoxVertex {
 
 impl_vertex!(BoxVertex, pos => 0, uv => 1);
 
+struct BoxInstance {
+    pos: Vec3,
+    crl: Color
+}
+
 struct DrawBoxSystem {
     vbo: wgpu::Buffer,
     ibo: wgpu::Buffer,
     ubo: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
-    pipeline: wgpu::RenderPipeline
+    pipeline: wgpu::RenderPipeline,
+    box_poses: Vec<BoxInstance>
 }
 
 impl DrawBoxSystem {
@@ -179,12 +185,31 @@ impl DrawBoxSystem {
             alpha_to_coverage_enabled: false
         });
 
+        const OFFSET: f32 = 2.0;
         Self {
             vbo,
             ibo,
             ubo,
             bind_group,
-            pipeline
+            pipeline,
+            box_poses: vec![
+                BoxInstance {
+                    pos: vec3(0., 0., 0.),
+                    crl: Color::white()
+                },
+                BoxInstance {
+                    pos: vec3(OFFSET, 0., 0.),
+                    crl: Color::rgb(1., 0., 0.),
+                },
+                BoxInstance {
+                    pos: vec3(0., OFFSET, 0.),
+                    crl: Color::rgb(0., 1., 0.),
+                },
+                BoxInstance {
+                    pos: vec3(0., 0., OFFSET),
+                    crl: Color::rgb(0., 0., 1.),
+                }
+            ]
         }
     }
 
@@ -198,24 +223,32 @@ impl<'a> System<'a> for DrawBoxSystem {
         graphics::with_render_data(|r| {
             let cam_infos = &mut r.camera_infos;
             for cam_info in cam_infos {
-                let wvp_mat_arr: [f32; 16] = math::mat::to_array(cam_info.wvp_matrix);
-                let tmp_mat_buf = ws.device.create_buffer_init(
-                    &wgpu::util::BufferInitDescriptor {
-                        label: None,
-                        contents: bytemuck::cast_slice(&wvp_mat_arr),
-                        usage: wgpu::BufferUsage::COPY_SRC
-                    }
-                );
-                cam_info.encoder.copy_buffer_to_buffer(&tmp_mat_buf, 0,
-                                                       &self.ubo, 0, mem::size_of::<[f32; 16]>() as wgpu::BufferAddress);
+                for box_inst in &self.box_poses {
+                    let local_to_world = Mat4::from_translation(box_inst.pos);
+                    let wvp_mat_arr: [f32; 16] = math::mat::to_array(cam_info.wvp_matrix * local_to_world);
+                    let crl_arr: [f32; 4] = box_inst.crl.into();
+                    let mut ubo_arr = [0.0f32; 19];
+                    ubo_arr[..16].clone_from_slice(&wvp_mat_arr);
+                    ubo_arr[16..].clone_from_slice(&crl_arr[..3]);
 
-                {
-                    let mut render_pass = cam_info.render_pass(&*ws);
-                    render_pass.set_pipeline(&self.pipeline);
-                    render_pass.set_bind_group(0, &self.bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, self.vbo.slice(..));
-                    render_pass.set_index_buffer(self.ibo.slice(..));
-                    render_pass.draw_indexed(0..36, 0, 0..1);
+                    let tmp_ubo_buf = ws.device.create_buffer_init(
+                        &wgpu::util::BufferInitDescriptor {
+                            label: None,
+                            contents: bytemuck::cast_slice(&ubo_arr),
+                            usage: wgpu::BufferUsage::COPY_SRC
+                        }
+                    );
+                    cam_info.encoder.copy_buffer_to_buffer(&tmp_ubo_buf, 0,
+                                                           &self.ubo, 0, mem::size_of::<[f32; 19]>() as wgpu::BufferAddress);
+
+                    {
+                        let mut render_pass = cam_info.render_pass(&*ws);
+                        render_pass.set_pipeline(&self.pipeline);
+                        render_pass.set_bind_group(0, &self.bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, self.vbo.slice(..));
+                        render_pass.set_index_buffer(self.ibo.slice(..));
+                        render_pass.draw_indexed(0..36, 0, 0..1);
+                    }
                 }
             }
         });
@@ -223,7 +256,19 @@ impl<'a> System<'a> for DrawBoxSystem {
 }
 
 
-struct CameraControlSystem;
+struct CameraControlSystem {
+    pub yaw: Rad,
+    pub pitch: Rad,
+}
+
+impl CameraControlSystem {
+    fn new() -> Self {
+        Self {
+            yaw: Zero::zero(),
+            pitch: Zero::zero()
+        }
+    }
+}
 
 impl<'a> System<'a> for CameraControlSystem {
     type SystemData = (ReadExpect<'a, Time>, ReadExpect<'a, RawInputData>, WriteStorage<'a, Transform>, ReadStorage<'a, graphics::Camera>);
@@ -235,16 +280,11 @@ impl<'a> System<'a> for CameraControlSystem {
         let mouse_movement = input.mouse_frame_movement;
 
         for (trans, _) in (&mut trans_write, &cam_read).join() {
-            let r: Quaternion = trans.rot;
-            let mut euler: cgmath::Euler<Rad> = r.into();
-            euler.x += cgmath::Rad(-ROTATE_SENSITIVITY * mouse_movement.x); // Yaw
-            euler.y += cgmath::Rad(-ROTATE_SENSITIVITY * mouse_movement.y); // Pitch
-            euler.z = Rad::zero();
+            self.yaw += cgmath::Rad(ROTATE_SENSITIVITY * mouse_movement.x); // Yaw
+            self.pitch += cgmath::Rad(ROTATE_SENSITIVITY * mouse_movement.y); // Pitch
 
-            let new_rot: Quaternion = euler.into();
-            // log::info!("{:?}", euler);
-
-            trans.rot = new_rot;
+            let rot_basis = cgmath::Basis3::from_angle_x(self.pitch) * cgmath::Basis3::from_angle_y(self.yaw);
+            trans.rot = rot_basis.into();
 
             fn map_axis(bs: ButtonState, negate: bool) -> f32 {
                 if bs.is_down() {
@@ -262,6 +302,7 @@ impl<'a> System<'a> for CameraControlSystem {
                 let axis = axis.normalize();
                 let dt = time.get_delta_time();
                 let fwd = quat::get_forward_dir(trans.rot);
+                log::info!("fwd {:?}", fwd);
                 let right = quat::get_right_dir(trans.rot);
                 trans.pos += (axis.x * dt * MOVE_SENSITIVITY) * fwd;
                 trans.pos += (axis.y * dt * MOVE_SENSITIVITY) * right;
@@ -276,7 +317,7 @@ struct MyModule;
 impl Module for MyModule {
 
     fn init(&self, ctx: &mut InitContext) {
-        ctx.dispatch(Default::default(), |_, i| i.insert(CameraControlSystem));
+        ctx.dispatch(Default::default(), |_, i| i.insert(CameraControlSystem::new()));
 
         let insert_info =
             InsertInfo::new("box")
