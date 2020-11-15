@@ -144,13 +144,11 @@ pub mod quat {
     use super::*;
 
     pub fn get_forward_dir(q: Quaternion) -> Vec3 {
-        let mut v = q * vec3(0., 0., -1.);
-        v
+        q * vec3(0., 0., -1.)
     }
 
     pub fn get_right_dir(q: Quaternion) -> Vec3 {
-        let mut v = q * vec3(1., 0., 0.);
-        v
+        q * vec3(1., 0., 0.)
     }
 
 }

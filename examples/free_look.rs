@@ -59,35 +59,35 @@ impl DrawBoxSystem {
         let uv3 = [1., 0.];
 
         let vertices = vec![
-            BoxVertex::new(v0, uv0),
-            BoxVertex::new(v1, uv1),
-            BoxVertex::new(v2, uv2),
-            BoxVertex::new(v3, uv3),
+            BoxVertex::new(v3, uv0),
+            BoxVertex::new(v2, uv1),
+            BoxVertex::new(v1, uv2),
+            BoxVertex::new(v0, uv3),
 
             BoxVertex::new(v5, uv0),
-            BoxVertex::new(v2, uv1),
-            BoxVertex::new(v3, uv2),
+            BoxVertex::new(v1, uv1),
+            BoxVertex::new(v2, uv2),
             BoxVertex::new(v6, uv3),
 
             BoxVertex::new(v6, uv0),
-            BoxVertex::new(v3, uv1),
-            BoxVertex::new(v0, uv2),
+            BoxVertex::new(v2, uv1),
+            BoxVertex::new(v3, uv2),
             BoxVertex::new(v7, uv3),
 
             BoxVertex::new(v7, uv0),
-            BoxVertex::new(v0, uv1),
-            BoxVertex::new(v1, uv2),
+            BoxVertex::new(v3, uv1),
+            BoxVertex::new(v0, uv2),
             BoxVertex::new(v4, uv3),
 
             BoxVertex::new(v4, uv0),
-            BoxVertex::new(v1, uv1),
-            BoxVertex::new(v2, uv2),
+            BoxVertex::new(v0, uv1),
+            BoxVertex::new(v1, uv2),
             BoxVertex::new(v5, uv3),
 
-            BoxVertex::new(v7, uv0),
-            BoxVertex::new(v4, uv1),
-            BoxVertex::new(v5, uv2),
-            BoxVertex::new(v6, uv3),
+            BoxVertex::new(v4, uv0),
+            BoxVertex::new(v5, uv1),
+            BoxVertex::new(v6, uv2),
+            BoxVertex::new(v7, uv3),
         ];
 
         let vbo = ws.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -280,10 +280,10 @@ impl<'a> System<'a> for CameraControlSystem {
         let mouse_movement = input.mouse_frame_movement;
 
         for (trans, _) in (&mut trans_write, &cam_read).join() {
-            self.yaw += cgmath::Rad(ROTATE_SENSITIVITY * mouse_movement.x); // Yaw
-            self.pitch += cgmath::Rad(ROTATE_SENSITIVITY * mouse_movement.y); // Pitch
+            self.yaw -= cgmath::Rad(ROTATE_SENSITIVITY * mouse_movement.x); // Yaw
+            self.pitch -= cgmath::Rad(ROTATE_SENSITIVITY * mouse_movement.y); // Pitch
 
-            let rot_basis = cgmath::Basis3::from_angle_x(self.pitch) * cgmath::Basis3::from_angle_y(self.yaw);
+            let rot_basis = cgmath::Basis3::from_angle_y(self.yaw) * cgmath::Basis3::from_angle_x(self.pitch);
             trans.rot = rot_basis.into();
 
             fn map_axis(bs: ButtonState, negate: bool) -> f32 {
@@ -302,7 +302,6 @@ impl<'a> System<'a> for CameraControlSystem {
                 let axis = axis.normalize();
                 let dt = time.get_delta_time();
                 let fwd = quat::get_forward_dir(trans.rot);
-                log::info!("fwd {:?}", fwd);
                 let right = quat::get_right_dir(trans.rot);
                 trans.pos += (axis.x * dt * MOVE_SENSITIVITY) * fwd;
                 trans.pos += (axis.y * dt * MOVE_SENSITIVITY) * right;

@@ -838,7 +838,7 @@ mod internal {
     use super::*;
     use futures::executor::*;
     use futures::task::{LocalSpawnExt};
-    use cgmath::One;
+    use cgmath::{One, Rotation};
 
     pub struct SysRenderPrepare {}
 
@@ -882,7 +882,7 @@ mod internal {
                 //     .as_matrix()
                 //     .clone();
 
-                let rot = Mat4::from(trans.rot);
+                let rot = Mat4::from(trans.rot.invert());
                 //            rot[(3, 3)] = 1.0;
                 let world_view: Mat4 = rot * math::Mat4::from_translation(-trans.pos);
 
