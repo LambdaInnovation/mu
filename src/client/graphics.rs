@@ -154,8 +154,13 @@ pub struct CamRenderData {
 
 impl CamRenderData {
 
-    /// Creates a `RenderPass` for this camera.
     pub fn render_pass<'a>(&'a mut self, wgpu_state: &'a WgpuState) -> wgpu::RenderPass<'a> {
+        self.render_pass_with_depth(wgpu_state, None)
+    }
+
+    /// Creates a `RenderPass` for this camera.
+    pub fn render_pass_with_depth<'a>(&'a mut self, wgpu_state: &'a WgpuState, depth_stencil_attachment: Option<wgpu::RenderPassDepthStencilAttachmentDescriptor<'a>>)
+        -> wgpu::RenderPass<'a> {
         let render_pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             color_attachments: &[
                 wgpu::RenderPassColorAttachmentDescriptor {
@@ -167,7 +172,7 @@ impl CamRenderData {
                     }
                 }
             ],
-            depth_stencil_attachment: None
+            depth_stencil_attachment
         });
 
         render_pass

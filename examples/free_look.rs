@@ -38,10 +38,13 @@ struct DrawBoxSystem {
     ubo: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     pipeline: wgpu::RenderPipeline,
-    box_poses: Vec<BoxInstance>
+    box_poses: Vec<BoxInstance>,
+    depth_texture: wgpu::Texture,
+    depth_texture_view: wgpu::TextureView
 }
 
 impl DrawBoxSystem {
+    const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
     fn new(ws: &WgpuState) -> Self {
         let v0 = [0., 0., 0.];
@@ -175,7 +178,12 @@ impl DrawBoxSystem {
                 color_blend: wgpu::BlendDescriptor::REPLACE,
                 write_mask: wgpu::ColorWrite::ALL
             }],
-            depth_stencil_state: None,
+            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+                format: Self::DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: Default::default()
+            }),
             vertex_state: wgpu::VertexStateDescriptor {
                 index_format: wgpu::IndexFormat::Uint16,
                 vertex_buffers: &[get_vertex!(BoxVertex)]
@@ -185,6 +193,22 @@ impl DrawBoxSystem {
             alpha_to_coverage_enabled: false
         });
 
+        let depth_texture = ws.device.create_texture(&wgpu::TextureDescriptor {
+            size: wgpu::Extent3d {
+                width: ws.sc_desc.width,
+                height: ws.sc_desc.height,
+                depth: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::DEPTH_FORMAT,
+            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+            label: None
+        });
+
+        let depth_texture_view = depth_texture.create_view(&Default::default());
+
         const OFFSET: f32 = 2.0;
         Self {
             vbo,
@@ -192,6 +216,8 @@ impl DrawBoxSystem {
             ubo,
             bind_group,
             pipeline,
+            depth_texture,
+            depth_texture_view,
             box_poses: vec![
                 BoxInstance {
                     pos: vec3(0., 0., 0.),
@@ -220,6 +246,29 @@ impl<'a> System<'a> for DrawBoxSystem {
 
     fn run(&mut self, ws: Self::SystemData) {
         use std::mem;
+        // clear depth texture
+        {
+            let mut encoder = ws.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: None
+            });
+
+            let rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
+                    attachment: &self.depth_texture_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.),
+                        store: true
+                    }),
+                    stencil_ops: None
+                })
+            });
+            drop(rp);
+
+            let cb = encoder.finish();
+            ws.queue.submit(Some(cb));
+        }
+
         graphics::with_render_data(|r| {
             let cam_infos = &mut r.camera_infos;
             for cam_info in cam_infos {
@@ -242,7 +291,15 @@ impl<'a> System<'a> for DrawBoxSystem {
                                                            &self.ubo, 0, mem::size_of::<[f32; 19]>() as wgpu::BufferAddress);
 
                     {
-                        let mut render_pass = cam_info.render_pass(&*ws);
+                        let mut render_pass = cam_info.render_pass_with_depth(&*ws,
+                            Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
+                                attachment: &self.depth_texture_view,
+                                depth_ops: Some(wgpu::Operations {
+                                    load: wgpu::LoadOp::Load,
+                                    store: true
+                                }),
+                                stencil_ops: None
+                            }));
                         render_pass.set_pipeline(&self.pipeline);
                         render_pass.set_bind_group(0, &self.bind_group, &[]);
                         render_pass.set_vertex_buffer(0, self.vbo.slice(..));
