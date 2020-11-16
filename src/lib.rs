@@ -713,8 +713,16 @@ impl Runtime {
         { // Window info update
             let mut window_info = world.write_resource::<WindowInfo>();
             window_info.frame_event_list.clear();
-            window.set_cursor_grab(window_info.grab_cursor_count > 0)
-                .expect("Can't set cursor grab");
+
+            if window_info.last_grab_cursor != window_info.grab_cursor {
+                drop(window.set_cursor_grab(window_info.grab_cursor));
+                window_info.last_grab_cursor = window_info.grab_cursor;
+            }
+
+            if window_info.last_show_cursor != window_info.show_cursor {
+                window.set_cursor_visible(window_info.show_cursor);
+                window_info.last_show_cursor = window_info.last_show_cursor;
+            }
         }
 
         // 帧末释放所有资源

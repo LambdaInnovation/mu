@@ -1,5 +1,5 @@
 use mu::*;
-use mu::client::graphics;
+use mu::client::{graphics, WindowInfo};
 use wgpu::util::DeviceExt;
 use specs::prelude::*;
 use mu::math::*;
@@ -9,6 +9,7 @@ use mu::client::input::{RawInputData, ButtonState};
 use mu::math::cgmath::Rotation3;
 use cgmath::InnerSpace;
 use winit::event::VirtualKeyCode;
+use cgmath::num_traits::real::Real;
 
 #[derive(Copy, Clone)]
 struct BoxVertex {
@@ -340,6 +341,9 @@ impl<'a> System<'a> for CameraControlSystem {
             self.yaw -= cgmath::Rad(ROTATE_SENSITIVITY * mouse_movement.x); // Yaw
             self.pitch -= cgmath::Rad(ROTATE_SENSITIVITY * mouse_movement.y); // Pitch
 
+            let half_pi = PI / 2.0;
+            self.pitch = clamp(self.pitch, cgmath::Rad(-half_pi), cgmath::Rad(half_pi));
+
             let rot_basis = cgmath::Basis3::from_angle_y(self.yaw) * cgmath::Basis3::from_angle_x(self.pitch);
             trans.rot = rot_basis.into();
 
@@ -386,6 +390,13 @@ impl Module for MyModule {
     }
 
     fn start(&self, ctx: &mut StartContext) {
+        // Set cursor grab
+        {
+            let mut window_info = ctx.world.write_resource::<WindowInfo>();
+            window_info.grab_cursor = true;
+            window_info.show_cursor = false;
+        }
+
         // Camera
         ctx.world.create_entity()
             .with(graphics::Camera {
