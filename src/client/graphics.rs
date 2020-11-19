@@ -139,6 +139,32 @@ pub struct Camera {
     pub projection: CameraProjection,
     pub clear_color: Option<Color>,
     pub clear_depth: bool,
+
+    /// Depth texture will be created first time Camera is rendered. Subsequent changes have no use.
+    pub depth_texture_format: Option<wgpu::TextureFormat>,
+
+    /// For user this should(and can) only be initialized as None.
+    pub runtime_data: Option<CameraRuntimeData>
+}
+
+impl Default for Camera {
+    fn default() -> Self {
+        Self {
+            projection: CameraProjection::Orthographic {
+                size: 1.0,
+                z_near: 0.0,
+                z_far: 1.0
+            },
+            clear_color: None,
+            clear_depth: false,
+            depth_texture_format: None,
+            runtime_data: None
+        }
+    }
+}
+
+pub struct CameraRuntimeData {
+    depth_texture: Option<wgpu::Texture>,
 }
 
 impl Component for Camera {
@@ -150,17 +176,22 @@ pub struct CamRenderData {
     pub wvp_matrix: Mat4,
     pub world_pos: Vec3,
     pub encoder: wgpu::CommandEncoder,
+    pub depth_texture_view: Option<wgpu::TextureView>
 }
 
 impl CamRenderData {
 
-    pub fn render_pass<'a>(&'a mut self, wgpu_state: &'a WgpuState) -> wgpu::RenderPass<'a> {
-        self.render_pass_with_depth(wgpu_state, None)
-    }
-
     /// Creates a `RenderPass` for this camera.
-    pub fn render_pass_with_depth<'a>(&'a mut self, wgpu_state: &'a WgpuState, depth_stencil_attachment: Option<wgpu::RenderPassDepthStencilAttachmentDescriptor<'a>>)
+    pub fn render_pass<'a>(&'a mut self, wgpu_state: &'a WgpuState)
         -> wgpu::RenderPass<'a> {
+        let depth_stencil_attachment = self.depth_texture_view.as_ref().map(|t| wgpu::RenderPassDepthStencilAttachmentDescriptor {
+            attachment: t,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: true
+            }),
+            stencil_ops: None // TODO: Stencil support
+        });
         let render_pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             color_attachments: &[
                 wgpu::RenderPassColorAttachmentDescriptor {
@@ -843,7 +874,7 @@ mod internal {
     use super::*;
     use futures::executor::*;
     use futures::task::{LocalSpawnExt};
-    use cgmath::{One, Rotation};
+    use cgmath::{Rotation};
 
     pub struct SysRenderPrepare {}
 
@@ -861,16 +892,36 @@ mod internal {
 
     impl<'a> System<'a> for SysRenderPrepare {
         type SystemData = (ReadExpect<'a, WindowInfo>, ReadExpect<'a, WgpuState>,
-                           Entities<'a>, ReadStorage<'a, Camera>, ReadStorage<'a, Transform>);
+                           Entities<'a>, WriteStorage<'a, Camera>, ReadStorage<'a, Transform>);
 
-        fn run(&mut self, (window_info, wgpu_state, entities, cameras, transforms): Self::SystemData) {
+        fn run(&mut self, (window_info, wgpu_state, entities, mut cameras, transforms): Self::SystemData) {
             // let mut frame = self.display.draw();
             // Calculate wvp matrix
             let aspect: f32 = window_info.get_aspect_ratio();
 
             let mut cam_id = 0;
             let mut result_vec = vec![];
-            for (ent, cam, trans) in (&entities, &cameras, &transforms).join() {
+            for (ent, cam, trans) in (&entities, &mut cameras, &transforms).join() {
+                // Create camera runtime data
+                // TODO: Change when screen resizes
+                if cam.runtime_data.is_none() {
+                    cam.runtime_data = Some(CameraRuntimeData {
+                        depth_texture: cam.depth_texture_format.map(|fmt| {
+                            wgpu_state.device.create_texture(&wgpu::TextureDescriptor {
+                                label: None,
+                                size: wgpu::Extent3d { width: wgpu_state.sc_desc.width, height: wgpu_state.sc_desc.height, depth: 1 },
+                                mip_level_count: 1,
+                                sample_count: 1,
+                                dimension: wgpu::TextureDimension::D2,
+                                format: fmt,
+                                usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT
+                            })
+                        })
+                    })
+                }
+
+                let runtime_data = cam.runtime_data.as_ref().unwrap();
+
                 let projection = match cam.projection {
                     CameraProjection::Perspective { fov, z_near, z_far } => {
                         math::mat::perspective(crate::math::deg(fov), aspect, z_near, z_far)
@@ -883,12 +934,8 @@ mod internal {
                                          z_near, z_far)
                     }
                 };
-                // let perspective: Mat4 = crate::math::cgmath::perspective()
-                //     .as_matrix()
-                //     .clone();
 
                 let rot = Mat4::from(trans.rot.invert());
-                //            rot[(3, 3)] = 1.0;
                 let world_view: Mat4 = rot * math::Mat4::from_translation(-trans.pos);
 
                 let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -896,23 +943,38 @@ mod internal {
                 });
 
                 let wvp_matrix = projection * world_view;
-                match cam.clear_color {
-                    Some(color) => {
-                        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            color_attachments: &[
-                                wgpu::RenderPassColorAttachmentDescriptor {
-                                    attachment: &wgpu_state.frame_texture.as_ref().unwrap().output.view,
-                                    resolve_target: None,
-                                    ops: wgpu::Operations {
-                                        load: wgpu::LoadOp::Clear(color.into()),
-                                        store: true
-                                    }
+                let depth_texture_view = runtime_data.depth_texture
+                    .as_ref()
+                    .map(|t| t.create_view(&Default::default()));
+
+                if cam.clear_color.is_some() || cam.clear_depth {
+                    // Clear color & depth pass
+                    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        color_attachments: &[
+                            wgpu::RenderPassColorAttachmentDescriptor {
+                                attachment: &wgpu_state.frame_texture.as_ref().unwrap().output.view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: match cam.clear_color {
+                                        Some(clear_color) => wgpu::LoadOp::Clear(clear_color.into()),
+                                        None => wgpu::LoadOp::Load,
+                                    },
+                                    store: true
                                 }
-                            ],
-                            depth_stencil_attachment: None
-                        });
-                    }
-                    _ => (),
+                            }
+                        ],
+                        depth_stencil_attachment: match cam.clear_depth {
+                            true => Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
+                                attachment: depth_texture_view.as_ref().unwrap(),
+                                depth_ops: Some(wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(1.0f32),
+                                    store: true
+                                }),
+                                stencil_ops: None
+                            }),
+                            _ => None
+                        }
+                    });
                 }
 
                 let cam_render_data = CamRenderData {
@@ -920,6 +982,7 @@ mod internal {
                     world_pos: trans.pos,
                     encoder,
                     entity: ent,
+                    depth_texture_view
                 };
 
                 result_vec.push(cam_render_data);

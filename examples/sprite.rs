@@ -68,7 +68,8 @@ impl Module for MyModule {
             .with(Camera {
                 projection: CameraProjection::Orthographic { z_near: -1., z_far: 1., size: 4. } ,
                 clear_depth: true,
-                clear_color: Some(Color::black())
+                clear_color: Some(Color::black()),
+                ..Default::default()
             })
             .build();
     }
