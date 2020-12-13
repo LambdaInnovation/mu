@@ -803,9 +803,23 @@ pub(super) mod editor {
                 .for_each(|SpriteSheetEditRequest(path)| {
                     // TODO: Replace is VERY temporary
                     let config: SpriteSheetConfig = load_asset(&path.to_str().unwrap().replace("\\", "/")).unwrap();
+                    // let tex = graphics::load_texture(&wgpu_state, &get_asset_path_local(&config._path, &config.texture));
+                    // let texture_id = ui_res.renderer.upload_texture(&wgpu_state.device, &wgpu_state.queue, &image.into_rgba().into_vec(), w, h, None);
                     let (_, image) = load_texture_raw(&get_asset_path_local(&config._path, &config.texture));
                     let (w, h) = (image.width(), image.height());
-                    let texture_id = ui_res.renderer.upload_texture(&wgpu_state.device, &wgpu_state.queue, &image.into_rgba().into_vec(), w, h, None);
+                    let ws_ref = &*wgpu_state;
+                    let imgui_tex = imgui_wgpu::Texture::new(&ws_ref.device, &ui_res.renderer, imgui_wgpu::TextureConfig {
+                        size: wgpu::Extent3d {
+                            width: w,
+                            height: h,
+                            depth: 1,
+                        },
+                        label: Some("sprite texture"),
+                        ..Default::default()
+                    });
+                    let image_raw = &image.to_bgra8().into_raw();
+                    imgui_tex.write(&ws_ref.queue, &image_raw, w, h);
+                    let texture_id = ui_res.renderer.textures.insert(imgui_tex);
 
                     let cmpt = SpriteSheetEditor {
                         config,

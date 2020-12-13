@@ -40,8 +40,8 @@ shaderc = "0.6"
 
 wgpu_glyph = "0.10"
 
-imgui = "*"
-imgui-winit-support = "*"
-imgui-wgpu = "0.9"
-imgui-inspect = "0.5"
-imgui-inspect-derive = "0.5"
+imgui = "0.6"
+imgui-winit-support = "0.6"
+imgui-wgpu = "0.12"
+imgui-inspect = "0.7"
+imgui-inspect-derive = "0.7"
