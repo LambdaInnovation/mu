@@ -86,9 +86,9 @@ impl InspectRenderSlider<Vec2> for Vec2DefaultInspect {
         assert_eq!(data.len(), 1, "Rendering >1 items not supported yet");
 
         let mut tmp_arr: [f32; 2] = (*data[0]).into();
-        if ui.drag_float2(&im_str!("{}", label), &mut tmp_arr).build() {
+        if Drag::new(&im_str!("{}", label))
+            .build_array(ui, &mut tmp_arr) {
             *data[0] = vec2(tmp_arr[0], tmp_arr[1]);
-            return true
         }
 
         false
@@ -122,7 +122,7 @@ impl InspectRenderSlider<cgmath::Vector2<i32>> for Vec2DefaultInspect {
         assert_eq!(data.len(), 1, "Rendering >1 items not supported yet");
 
         let mut tmp_arr: [i32; 2] = (*data[0]).into();
-        if ui.drag_int2(&im_str!("{}", label), &mut tmp_arr).build() {
+        if Drag::new(&im_str!("{}", label)).build_array(ui, &mut tmp_arr) {
             *data[0] = tmp_arr.into();
             return true
         }

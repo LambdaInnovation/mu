@@ -8,7 +8,7 @@ use imgui_winit_support::{WinitPlatform, HiDpiMode};
 use std::time::Instant;
 use std::rc::Rc;
 use winit::window::Window;
-use imgui_wgpu::Renderer;
+use imgui_wgpu::{Renderer, RendererConfig};
 use std::collections::HashSet;
 
 pub mod inspect;
@@ -51,8 +51,10 @@ pub struct EditorUIResources {
 impl EditorUIResources {
 
     pub fn new(context: &mut imgui::Context, ws: &WgpuState) -> Self {
-        let renderer =
-            Renderer::new(context, &ws.device, &ws.queue, ws.sc_desc.format);
+        let mut renderer_config = RendererConfig::new_srgb();
+        renderer_config.texture_format = ws.sc_desc.format;
+
+        let renderer = Renderer::new(context, &ws.device, &ws.queue, renderer_config);
         Self {
             show_ui: true,
             demo_window_opened: false,
@@ -75,7 +77,6 @@ struct EditorUISetupSystem {
     platform: WinitPlatform,
     imgui: imgui::Context,
     window: Rc<Window>,
-    last_frame: Option<Instant>
 }
 
 impl EditorUISetupSystem {
@@ -87,17 +88,19 @@ impl EditorUISetupSystem {
             imgui,
             platform,
             window,
-            last_frame: None,
         }
     }
 }
 
 impl<'a> System<'a> for EditorUISetupSystem {
-    type SystemData = (ReadExpect<'a, WindowInfo>, WriteExpect<'a, EditorUIResources>);
+    type SystemData = (ReadExpect<'a, Time>,
+                       ReadExpect<'a, WindowInfo>, WriteExpect<'a, EditorUIResources>);
 
-    fn run(&mut self, (data, mut ui_res_write): Self::SystemData) {
+    fn run(&mut self, (time, data, mut ui_res_write): Self::SystemData) {
         let ui_res = &mut *ui_res_write;
         let data = &data;
+
+        let delta_time = std::time::Duration::from_secs_f32(time.get_delta_time());
 
         if !ui_res.show_ui {
             return
@@ -115,11 +118,7 @@ impl<'a> System<'a> for EditorUISetupSystem {
             .prepare_frame(self.imgui.io_mut(), &*self.window)
             .expect("Failed to prepare frame!");
 
-        let last_frame = match self.last_frame {
-            Some(instant) => instant,
-            None => Instant::now()
-        };
-        self.last_frame = Some(self.imgui.io_mut().update_delta_time(last_frame));
+        self.imgui.io_mut().update_delta_time(delta_time);
 
         let ui = self.imgui.frame();
         ui.main_menu_bar(|| {

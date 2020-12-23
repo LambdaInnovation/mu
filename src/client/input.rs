@@ -124,7 +124,7 @@ impl RawInputData {
         }
     }
 
-    fn _mouse_btn_to_id(btn: event::MouseButton) -> u8 {
+    fn _mouse_btn_to_id(btn: event::MouseButton) -> u16 {
         match btn {
             event::MouseButton::Left => 0,
             event::MouseButton::Right => 1,
@@ -133,7 +133,7 @@ impl RawInputData {
         }
     }
 
-    fn _id_to_mouse_btn(id: u8) -> event::MouseButton {
+    fn _id_to_mouse_btn(id: u16) -> event::MouseButton {
         match id {
             0 => event::MouseButton::Left,
             1 => event::MouseButton::Right,

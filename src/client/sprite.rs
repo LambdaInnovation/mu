@@ -817,7 +817,7 @@ pub(super) mod editor {
                         label: Some("sprite texture"),
                         ..Default::default()
                     });
-                    let image_raw = &image.to_bgra8().into_raw();
+                    let image_raw = &image.to_bgra().into_raw();
                     imgui_tex.write(&ws_ref.queue, &image_raw, w, h);
                     let texture_id = ui_res.renderer.textures.insert(imgui_tex);
 
