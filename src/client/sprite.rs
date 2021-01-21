@@ -28,9 +28,9 @@ use super::editor::inspect::*;
 pub struct SpriteConfig {
     name: String,
     #[inspect(proxy_type="Vec2DefaultInspect")]
-    pos: cgmath::Vector2<i32>,  // Center of the sprite, in pixel coordinates
+    pos: IVec2,  // Center of the sprite, in pixel coordinates
     #[inspect(proxy_type="Vec2DefaultInspect")]
-    size: cgmath::Vector2<i32>, // Size of the image, in pixel coordinates
+    size: IVec2, // Size of the image, in pixel coordinates
     #[inspect(proxy_type="Vec2DefaultInspect")]
     pivot: Vec2, // the pos of the pivot within the sprite (normalized 0-1 range)
 }
@@ -38,11 +38,11 @@ pub struct SpriteConfig {
 impl SpriteConfig {
 
     pub fn pos_f32(&self) -> Vec2 {
-        self.pos.cast().unwrap()
+        self.pos.as_f32()
     }
 
     pub fn size_f32(&self) -> Vec2 {
-        self.size.cast().unwrap()
+        self.size.as_f32()
     }
 
 }
@@ -51,8 +51,8 @@ impl Default for SpriteConfig {
     fn default() -> Self {
         Self {
             name: "Default".to_string(),
-            pos: Zero::zero(),
-            size: Zero::zero(),
+            pos: IVec2::zero(),
+            size: IVec2::zero(),
             pivot: vec2(0.5, 0.5),
         }
     }
@@ -440,8 +440,10 @@ impl SpriteRenderSystem {
                 let sprite_scl: Vec2 = sprite_ref.config.size_f32() / (sheet.ppu as f32);
                 let sprite_offset: Vec2 = -(sprite_ref.config.pivot - math::vec2(0.5, 0.5));
                 let world_view: Mat4 = x.world_view *
-                    Mat4::from_nonuniform_scale(sprite_scl.x, sprite_scl.y, 1.0) *
-                    Mat4::from_translation(sprite_offset.extend(0.0));
+                    Mat4::from_scale_rotation_translation(
+                        vec3(sprite_scl.x, sprite_scl.y, 1.0),
+                        Quat::identity(),
+                        sprite_offset.extend(0.0));
 
                 #[inline]
                 fn xyz(v: Vec4) -> [f32; 3] {
@@ -450,10 +452,10 @@ impl SpriteRenderSystem {
 
                 // sprite_ref.config.
                 SpriteInstanceData {
-                    i_mat_col0: xyz(world_view.x),
-                    i_mat_col1: xyz(world_view.y),
-                    i_mat_col2: xyz(world_view.z),
-                    i_mat_col3: xyz(world_view.w),
+                    i_mat_col0: xyz(world_view.x_axis),
+                    i_mat_col1: xyz(world_view.y_axis),
+                    i_mat_col2: xyz(world_view.z_axis),
+                    i_mat_col3: xyz(world_view.w_axis),
                     i_uv_min: [sprite_ref.uv_min.x, sprite_ref.uv_min.y],
                     i_uv_max: [sprite_ref.uv_max.x, sprite_ref.uv_max.y],
                     i_color: x.color.into(),
@@ -534,7 +536,7 @@ impl<'a> System<'a> for SpriteRenderSystem {
     fn run(&mut self, (wgpu_state, sprite_mgr, sr_vec, trans_vec): Self::SystemData) {
         let mut cur_batch: Option<Batch> = None;
         for (trans, sr) in (&trans_vec, &sr_vec).join() {
-            let world_view: Mat4 = math::Mat4::from_translation(trans.pos) * Mat4::from(trans.rot);
+            let world_view = Mat4::from_translation(trans.pos) * Mat4::from_quat(trans.rot);
             let sprite_instance = SpriteInstance {
                 idx: sr.sprite.idx,
                 world_view,

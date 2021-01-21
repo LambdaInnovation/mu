@@ -81,11 +81,11 @@ mod internal {
                         });
 
                         let scl = text.sz / size_scl;
-                        let scl_mat = Mat4::from_nonuniform_scale(scl, -scl, 1.);
+                        let scl_mat = Mat4::from_scale(vec3(scl, -scl, 1.));
                         let wvp_mat = cam.wvp_matrix * trans.get_world_view() * scl_mat;
 
                         font_data_ref.glyph_brush.draw_queued_with_transform(&wgpu_state.device, &mut rd.staging_belt, &mut cam.encoder,
-                           &wgpu_state.frame_texture.as_ref().unwrap().output.view, mat::to_array(wvp_mat))
+                                                                             &wgpu_state.frame_texture.as_ref().unwrap().output.view, wvp_mat.to_cols_array())
                             .unwrap();
                     }
                 }

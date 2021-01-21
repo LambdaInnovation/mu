@@ -26,7 +26,7 @@ impl Module for MyModule {
             .with(Transform::new())
             .with(Camera { projection: CameraProjection::Orthographic { size: 2., z_near: -1., z_far: 1. },
                 clear_color: Some(Color::rgb(0.5, 0.5, 0.5)),
-                clear_depth: true,
+                clear_depth: false,
                 ..Default::default()
             })
             .build();

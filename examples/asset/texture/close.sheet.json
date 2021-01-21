@@ -1,1 +1,21 @@
-{"texture":"close.tex.json","sprites":[{"name":"Default","pos":{"x":18,"y":18},"size":{"x":36,"y":36},"pivot":{"x":0.5,"y":0.5}}],"ppu":32}
+{
+  "texture": "close.tex.json",
+  "sprites": [
+    {
+      "name": "Default",
+      "pos": [
+        18,
+        18
+      ],
+      "size": [
+        36,
+        36
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ]
+    }
+  ],
+  "ppu": 32
+}

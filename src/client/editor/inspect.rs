@@ -3,7 +3,6 @@ use crate::math::*;
 use imgui::*;
 use serde::export::PhantomData;
 use strum::*;
-use cgmath::Vector2;
 
 pub struct VecDefaultInspect<T, U = T> where U: InspectRenderDefault<T> {
     marker: PhantomData<(T, U)>,
@@ -95,12 +94,12 @@ impl InspectRenderSlider<Vec2> for Vec2DefaultInspect {
     }
 }
 
-impl InspectRenderDefault<cgmath::Vector2<i32>> for Vec2DefaultInspect {
-    fn render(_: &[&Vector2<i32>], _: &'static str, _: &Ui, _: &InspectArgsDefault) {
+impl InspectRenderDefault<IVec2> for Vec2DefaultInspect {
+    fn render(_: &[&IVec2], _: &'static str, _: &Ui, _: &InspectArgsDefault) {
         unimplemented!()
     }
 
-    fn render_mut(data: &mut [&mut Vector2<i32>], label: &'static str, ui: &Ui, _args: &InspectArgsDefault) -> bool {
+    fn render_mut(data: &mut [&mut IVec2], label: &'static str, ui: &Ui, _args: &InspectArgsDefault) -> bool {
         assert_eq!(data.len(), 1, "Rendering >1 items not supported yet");
 
         let mut tmp_arr: [i32; 2] = (*data[0]).into();
@@ -113,12 +112,12 @@ impl InspectRenderDefault<cgmath::Vector2<i32>> for Vec2DefaultInspect {
     }
 }
 
-impl InspectRenderSlider<cgmath::Vector2<i32>> for Vec2DefaultInspect {
-    fn render(_: &[&Vector2<i32>], _: &'static str, _: &Ui, _: &InspectArgsSlider) {
+impl InspectRenderSlider<IVec2> for Vec2DefaultInspect {
+    fn render(_: &[&IVec2], _: &'static str, _: &Ui, _: &InspectArgsSlider) {
         unimplemented!()
     }
 
-    fn render_mut(data: &mut [&mut Vector2<i32>], label: &'static str, ui: &Ui, _: &InspectArgsSlider) -> bool {
+    fn render_mut(data: &mut [&mut IVec2], label: &'static str, ui: &Ui, _: &InspectArgsSlider) -> bool {
         assert_eq!(data.len(), 1, "Rendering >1 items not supported yet");
 
         let mut tmp_arr: [i32; 2] = (*data[0]).into();

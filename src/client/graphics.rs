@@ -778,7 +778,7 @@ impl Material {
                                 slice[1] = v.y;
                             },
                             MatProperty::Mat4(v) => {
-                                let arr: [f32; 16] = math::mat::to_array(*v);
+                                let arr: [f32; 16] = v.to_cols_array();
                                 for i in 0..16 {
                                     slice[i] = arr[i];
                                 }
@@ -874,7 +874,6 @@ mod internal {
     use super::*;
     use futures::executor::*;
     use futures::task::{LocalSpawnExt};
-    use cgmath::{Rotation};
 
     pub struct SysRenderPrepare {}
 
@@ -924,18 +923,18 @@ mod internal {
 
                 let projection = match cam.projection {
                     CameraProjection::Perspective { fov, z_near, z_far } => {
-                        math::mat::perspective(crate::math::deg(fov), aspect, z_near, z_far)
+                        math::projection::perspective(fov, aspect, z_near, z_far)
                     }
                     CameraProjection::Orthographic { size, z_near, z_far } => {
                         let half_size = size / 2.;
 
-                        math::mat::ortho(-aspect * half_size, aspect * half_size,
-                                         -half_size, half_size,
-                                         z_near, z_far)
+                        math::projection::ortho(-aspect * half_size, aspect * half_size,
+                                                -half_size, half_size,
+                                                z_near, z_far)
                     }
                 };
 
-                let rot = Mat4::from(trans.rot.invert());
+                let rot = Mat4::from_quat(trans.rot.conjugate());
                 let world_view: Mat4 = rot * math::Mat4::from_translation(-trans.pos);
 
                 let mut encoder = wgpu_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -965,7 +964,8 @@ mod internal {
                         ],
                         depth_stencil_attachment: match cam.clear_depth {
                             true => Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
-                                attachment: depth_texture_view.as_ref().unwrap(),
+                                attachment: depth_texture_view.as_ref()
+                                    .expect("Camera clear_depth == true but no depth texture specified!"),
                                 depth_ops: Some(wgpu::Operations {
                                     load: wgpu::LoadOp::Clear(1.0f32),
                                     store: true

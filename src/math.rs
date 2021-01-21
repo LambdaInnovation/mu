@@ -3,32 +3,15 @@
 use std::f32::consts;
 use std::ops::{Div, Mul, Sub, Add};
 
-/// ! Many structs in cgmath crate is used by Mu::math, so we provide direct access here.
-pub use cgmath;
-pub use cgmath::{
-    SquareMatrix, One, Zero
-};
+pub use glam::*;
 
-pub type Float = f32;
-
-pub type Vec4 = cgmath::Vector4<Float>;
-pub type Vec3 = cgmath::Vector3<Float>;
-pub type Vec2 = cgmath::Vector2<Float>;
-
-pub type Mat3 = cgmath::Matrix3<Float>;
-pub type Mat4 = cgmath::Matrix4<Float>;
-
-pub type Quaternion = cgmath::Quaternion<Float>;
-pub type Rotation3 = cgmath::Basis3<Float>;
-
-pub type Deg = cgmath::Deg<Float>;
-pub type Rad = cgmath::Rad<Float>;
-pub type Euler = cgmath::Euler<Deg>;
-pub type Perspective = cgmath::PerspectiveFov<Float>;
+pub type Perspective = cgmath::PerspectiveFov<f32>;
 
 pub const PI: f32 = consts::PI;
 pub const DEG_2_RAD: f32 = PI / 180.0;
 pub const RAD_2_DEG: f32 = 180.0 / PI;
+
+pub use num_traits::{One, real::Real};
 
 /// Linearly interpolates between a and b with parameter t.
 #[inline]
@@ -58,33 +41,18 @@ pub fn approx_eq(lhs: f32, rhs: f32) -> bool {
 }
 
 #[inline]
-pub fn vec2(x: Float, y: Float) -> Vec2 {
-    Vec2::new(x, y)
-}
-
-#[inline]
 pub fn vec2_approx_eq(v1: Vec2, v2: Vec2) -> bool {
     approx_eq(v1.x, v2.x) &&
         approx_eq(v1.y, v2.y)
 }
 
 #[inline]
-pub fn vec3(x: Float, y: Float, z: Float) -> Vec3 {
-    Vec3::new(x, y, z)
-}
-
-#[inline]
-pub fn deg(x: Float) -> Deg {
-    cgmath::Deg(x)
-}
-
-#[inline]
-pub fn deg2rad(deg: Float) -> Float {
+pub fn deg2rad(deg: f32) -> f32 {
     DEG_2_RAD * deg
 }
 
 #[inline]
-pub fn rad2deg(rad: Float) -> Float {
+pub fn rad2deg(rad: f32) -> f32 {
     RAD_2_DEG * rad
 }
 
@@ -140,22 +108,24 @@ impl Rect {
 }
 
 pub mod quat {
-    use crate::math::Quaternion;
     use super::*;
 
-    pub fn get_forward_dir(q: Quaternion) -> Vec3 {
+    pub fn get_forward_dir(q: Quat) -> Vec3 {
         q * vec3(0., 0., -1.)
     }
 
-    pub fn get_right_dir(q: Quaternion) -> Vec3 {
+    pub fn get_right_dir(q: Quat) -> Vec3 {
         q * vec3(1., 0., 0.)
     }
 
 }
 
-pub mod mat3 {
+// TODO
+pub trait Mat3Ext {
+}
+
+pub mod mat3ex {
     use super::*;
-    use cgmath::Angle;
 
     #[inline]
     pub fn extend_to_mat4(m: &Mat3) -> Mat4 {
@@ -164,21 +134,21 @@ pub mod mat3 {
             Vec4::new(v.x, v.y, 0., v.z)
         }
 
-        Mat4 {
-            x: ext_col(&m.x),
-            y: ext_col(&m.y),
-            z: Vec4::new(0., 0., 1., 0.),
-            w: ext_col(&m.z)
-        }
+        Mat4::from_cols(
+            ext_col(&m.x_axis),
+            ext_col(&m.y_axis),
+            Vec4::new(0., 0., 1., 0.),
+            ext_col(&m.z_axis)
+        )
     }
 
     pub fn translate(p: Vec2) -> Mat3 {
         #[cfg_attr(rustfmt, rustfmt_skip)]
-        Mat3::new(
+        Mat3::from_cols_array(&[
             1., 0., 0.,
             0., 1., 0.,
             p.x, p.y, 1.,
-        )
+        ])
     }
 
     pub fn ortho(left: f32, right: f32, bottom: f32, top: f32) -> Mat3 {
@@ -195,16 +165,16 @@ pub mod mat3 {
         let c2r2 = 1.;
 
         #[cfg_attr(rustfmt, rustfmt_skip)]
-        Mat3::new(
+        Mat3::from_cols_array(&[
             c0r0, c0r1, c0r2,
             c1r0, c1r1, c1r2,
             c2r0, c2r1, c2r2
-        )
+        ])
     }
 
-    pub fn rotate_around(p: Vec2, angle: Deg) -> Mat3 {
-        let c = Angle::cos(angle);
-        let s = Angle::sin(angle);
+    pub fn rotate_around(p: Vec2, angle: f32) -> Mat3 {
+        let c = angle.cos();
+        let s = angle.sin();
         let dx = p.x;
         let dy = p.y;
 
@@ -218,7 +188,11 @@ pub mod mat3 {
         let c1r2 = 0.;
         let c2r2 = 1.;
 
-        Mat3::new(c0r0, c0r1, c0r2, c1r0, c1r1, c1r2, c2r0, c2r1, c2r2)
+        Mat3::from_cols_array(&[
+            c0r0, c0r1, c0r2,
+            c1r0, c1r1, c1r2,
+            c2r0, c2r1, c2r2
+        ])
     }
 
     pub fn scale_around(p: Vec2, scl: Vec2) -> Mat3 {
@@ -235,48 +209,78 @@ pub mod mat3 {
         let c1r2 = 0.;
         let c2r2 = 1.;
 
-        Mat3::new(c0r0, c0r1, c0r2, c1r0, c1r1, c1r2, c2r0, c2r1, c2r2)
-    }
-
-    pub fn scale(scl: Vec2) -> Mat3 {
-        let c0r0 = scl.x;
-        let c1r0 = 0.;
-        let c2r0 = 0.;
-        let c0r1 = 0.;
-        let c1r1 = scl.y;
-        let c2r1 = 0.;
-        let c0r2 = 0.;
-        let c1r2 = 0.;
-        let c2r2 = 1.;
-
-        #[cfg_attr(rustfmt, rustfmt_skip)]
-            Mat3::new(
+        Mat3::from_cols_array(&[
             c0r0, c0r1, c0r2,
             c1r0, c1r1, c1r2,
             c2r0, c2r1, c2r2
-        )
+        ])
     }
 }
 
-/// Convenient matrix operations.
-pub mod mat {
+/// Convenient projection operations.
+pub mod projection {
     use super::*;
 
     pub fn ortho(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> Mat4 {
-        cgmath::ortho(left, right, bottom, top, near, far)
+        let c0r0 = 2.0 / (right - left);
+        let c0r1 = 0.;
+        let c0r2 = 0.;
+        let c0r3 = 0.;
+
+        let c1r0 = 0.;
+        let c1r1 = 2.0 / (top - bottom);
+        let c1r2 = 0.;
+        let c1r3 = 0.;
+
+        let c2r0 = 0.;
+        let c2r1 = 0.;
+        let c2r2 = -2.0 / (far - near);
+        let c2r3 = 0.;
+
+        let c3r0 = -(right + left) / (right - left);
+        let c3r1 = -(top + bottom) / (top - bottom);
+        let c3r2 = -(far + near) / (far - near);
+        let c3r3 = 1.;
+
+        #[cfg_attr(rustfmt, rustfmt_skip)]
+        Mat4::from_cols_array(&[
+            c0r0, c0r1, c0r2, c0r3,
+            c1r0, c1r1, c1r2, c1r3,
+            c2r0, c2r1, c2r2, c2r3,
+            c3r0, c3r1, c3r2, c3r3,
+        ])
     }
 
-    pub fn perspective(fov: Deg, aspect: Float, z_near: Float, z_far: Float) -> Mat4 {
-        cgmath::perspective(fov, aspect, z_near, z_far)
-    }
+    pub fn perspective(fov: f32, aspect: f32, z_near: f32, z_far: f32) -> Mat4 {
+        let f = 1.0 / (fov * 0.5).tan();
 
-    pub fn to_array(m: Mat4) -> [f32; 16] {
-        [
-            m.x.x, m.x.y, m.x.z, m.x.w,
-            m.y.x, m.y.y, m.y.z, m.y.w,
-            m.z.x, m.z.y, m.z.z, m.z.w,
-            m.w.x, m.w.y, m.w.z, m.w.w,
-        ]
+        let c0r0 = f / aspect;
+        let c0r1 = 0.0;
+        let c0r2 = 0.0;
+        let c0r3 = 0.0;
+
+        let c1r0 = 0.0;
+        let c1r1 = f;
+        let c1r2 = 0.0;
+        let c1r3 = 0.0;
+
+        let c2r0 = 0.0;
+        let c2r1 = 0.0;
+        let c2r2 = (z_far + z_near) / (z_near - z_far);
+        let c2r3 = -1.0;
+
+        let c3r0 = 0.0;
+        let c3r1 = 0.0;
+        let c3r2 = (2.0 * z_far * z_near) / (z_near - z_far);
+        let c3r3 = 0.0;
+
+        #[cfg_attr(rustfmt, rustfmt_skip)]
+        Mat4::from_cols_array(&[
+            c0r0, c0r1, c0r2, c0r3,
+            c1r0, c1r1, c1r2, c1r3,
+            c2r0, c2r1, c2r2, c2r3,
+            c3r0, c3r1, c3r2, c3r3,
+        ])
     }
 }
 
@@ -284,9 +288,7 @@ pub mod mat {
 pub mod rand {
     pub use rand::prelude::*;
 
-    type Float = super::Float;
-
-    pub fn range(from: Float, to: Float) -> Float {
-        from + (to - from) * random::<Float>()
+    pub fn range(from: f32, to: f32) -> f32 {
+        from + (to - from) * random::<f32>()
     }
 }

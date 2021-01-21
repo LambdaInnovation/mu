@@ -47,15 +47,15 @@ pub struct Transform {
     #[serde(default="_vec3_zero")]
     pub pos: Vec3,
     #[serde(default="_quat_identity")]
-    pub rot: Quaternion,
+    pub rot: Quat,
 }
 
 fn _vec3_zero() -> Vec3 {
     Vec3::zero()
 }
 
-fn _quat_identity() -> Quaternion {
-    Quaternion::one()
+fn _quat_identity() -> Quat {
+    Quat::identity()
 }
 
 impl Transform {
@@ -63,7 +63,7 @@ impl Transform {
     pub fn new() -> Self {
         Self {
             pos: vec3(0., 0., 0.),
-            rot: Quaternion::one()
+            rot: Quat::identity()
         }
     }
 
@@ -72,13 +72,13 @@ impl Transform {
         self
     }
 
-    pub fn rot(mut self, r: Quaternion) -> Self {
+    pub fn rot(mut self, r: Quat) -> Self {
         self.rot = r;
         self
     }
 
     pub fn get_world_view(&self) -> Mat4 {
-        let rot: Mat4 = self.rot.into();
+        let rot = Mat4::from_quat(self.rot);
         let world_view = Mat4::from_translation(-self.pos) * rot;
         world_view
     }

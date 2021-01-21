@@ -20,11 +20,14 @@ pub type WindowEventLoop = event_loop::EventLoop<()>;
 
 #[macro_use]
 pub extern crate log;
-pub use wgpu;
-pub use specs;
-pub use bytemuck;
 use winit::dpi::PhysicalSize;
 use std::collections::HashSet;
+
+pub use specs;
+pub use bytemuck;
+pub use glam;
+
+pub use wgpu;
 
 pub mod asset;
 pub mod resource;

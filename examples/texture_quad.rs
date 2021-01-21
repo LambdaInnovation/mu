@@ -1,5 +1,4 @@
 use mu::*;
-use mu::math;
 use mu::client::graphics::*;
 use specs::prelude::*;
 use mu::ecs::{Transform, Time};
@@ -136,7 +135,7 @@ impl<'a> System<'a> for DrawQuadSystem {
         with_render_data(|r| {
             let cam_infos = &mut r.camera_infos;
             for cam_info in cam_infos {
-                let wvp_mat_arr: [f32; 16] = math::mat::to_array(cam_info.wvp_matrix);
+                let wvp_mat_arr: [f32; 16] = cam_info.wvp_matrix.to_cols_array();
                 let tmp_mat_buf = wgpu_state.device.create_buffer_init(
                     &wgpu::util::BufferInitDescriptor {
                         label: None,

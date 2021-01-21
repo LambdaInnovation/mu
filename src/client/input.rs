@@ -1,5 +1,4 @@
-use crate::math::Vec2;
-use cgmath::vec2;
+use crate::math::*;
 use winit::event;
 
 #[derive(Eq, PartialEq, Copy, Clone)]

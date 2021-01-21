@@ -6,8 +6,6 @@ use mu::math::*;
 use mu::util::Color;
 use mu::ecs::{Transform, Time};
 use mu::client::input::{RawInputData, ButtonState};
-use mu::math::cgmath::Rotation3;
-use cgmath::InnerSpace;
 use winit::event::VirtualKeyCode;
 
 #[derive(Copy, Clone)]
@@ -232,7 +230,7 @@ impl<'a> System<'a> for DrawBoxSystem {
             for cam_info in cam_infos {
                 for box_inst in &self.box_poses {
                     let local_to_world = Mat4::from_translation(box_inst.pos);
-                    let wvp_mat_arr: [f32; 16] = math::mat::to_array(cam_info.wvp_matrix * local_to_world);
+                    let wvp_mat_arr: [f32; 16] = (cam_info.wvp_matrix * local_to_world).to_cols_array();
                     let crl_arr: [f32; 4] = box_inst.crl.into();
                     let mut ubo_arr = [0.0f32; 19];
                     ubo_arr[..16].clone_from_slice(&wvp_mat_arr);
@@ -264,15 +262,15 @@ impl<'a> System<'a> for DrawBoxSystem {
 
 
 struct CameraControlSystem {
-    pub yaw: Rad,
-    pub pitch: Rad,
+    pub yaw: f32,
+    pub pitch: f32,
 }
 
 impl CameraControlSystem {
     fn new() -> Self {
         Self {
-            yaw: Zero::zero(),
-            pitch: Zero::zero()
+            yaw: 0.,
+            pitch: 0.
         }
     }
 }
@@ -287,14 +285,13 @@ impl<'a> System<'a> for CameraControlSystem {
         let mouse_movement = input.mouse_frame_movement;
 
         for (trans, _) in (&mut trans_write, &cam_read).join() {
-            self.yaw -= cgmath::Rad(ROTATE_SENSITIVITY * mouse_movement.x); // Yaw
-            self.pitch -= cgmath::Rad(ROTATE_SENSITIVITY * mouse_movement.y); // Pitch
+            self.yaw -= ROTATE_SENSITIVITY * mouse_movement.x; // Yaw
+            self.pitch -= ROTATE_SENSITIVITY * mouse_movement.y; // Pitch
 
             let half_pi = PI / 2.0;
-            self.pitch = clamp(self.pitch, cgmath::Rad(-half_pi), cgmath::Rad(half_pi));
+            self.pitch = clamp(self.pitch, -half_pi, half_pi);
 
-            let rot_basis = cgmath::Basis3::from_angle_y(self.yaw) * cgmath::Basis3::from_angle_x(self.pitch);
-            trans.rot = rot_basis.into();
+            trans.rot = Quat::from_rotation_ypr(self.yaw, self.pitch, 0.);
 
             fn map_axis(bs: ButtonState, negate: bool) -> f32 {
                 if bs.is_down() {
@@ -308,7 +305,7 @@ impl<'a> System<'a> for CameraControlSystem {
             let side_axis = map_axis(input.get_key(VirtualKeyCode::D), false) +
                 map_axis(input.get_key(VirtualKeyCode::A), true);
             let axis = vec2(fwd_axis, side_axis);
-            if axis.magnitude2() > 0.1 {
+            if axis.length_squared() > 0.1 {
                 let axis = axis.normalize();
                 let dt = time.get_delta_time();
                 let fwd = quat::get_forward_dir(trans.rot);
@@ -350,7 +347,7 @@ impl Module for MyModule {
         ctx.world.create_entity()
             .with(graphics::Camera {
                 projection: graphics::CameraProjection::Perspective {
-                    fov: 60.0,
+                    fov: math::deg2rad(60.0),
                     z_far: 1000.,
                     z_near: 0.01,
                 },
@@ -360,7 +357,7 @@ impl Module for MyModule {
                 ..Default::default()
             })
             .with(Transform {
-                rot: Quaternion::one(),
+                rot: Quat::identity(),
                 pos: vec3(0., 0., 5.)
             })
             .build();

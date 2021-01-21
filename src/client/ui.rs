@@ -119,7 +119,7 @@ pub enum WidgetCursorState {
 pub struct Widget {
     pub scl: Vec2,
     pub pivot: Vec2,
-    pub rot: Deg,
+    pub rot: f32,
     pub layout_x: LayoutType,
     pub layout_y: LayoutType,
     pub raycast: bool,
@@ -136,7 +136,7 @@ impl Widget {
         Widget {
             scl: vec2(1., 1.),
             pivot: vec2(0.5, 0.5),
-            rot: deg(0.),
+            rot: 0.,
             layout_x: LayoutType::Normal { align: AlignType::Middle, pos: 0.0, len: 100. },
             layout_y: LayoutType::Normal { align: AlignType::Middle, pos: 0.0, len: 100. },
             runtime_info: internal::WidgetRuntimeInfo::new(),
@@ -353,8 +353,8 @@ mod internal {
             Self {
                 dirty: true,
                 size: vec2(0., 0.),
-                wvp: Mat3::one(),
-                wvp_inverse: Mat3::one(),
+                wvp: Mat3::identity(),
+                wvp_inverse: Mat3::identity(),
                 draw_idx: 0,
                 cursor_states: [WidgetCursorState::Idle; 8]
             }
@@ -377,13 +377,13 @@ mod internal {
         }
     }
 
-    fn calc_widget_mat(offset: Vec2, scl: Vec2, rot: Deg) -> Mat3 {
-        let mut result = mat3::translate(offset);
-        if !approx_eq(rot.0, 0.) {
-            result = result * mat3::rotate_around(offset, rot);
+    fn calc_widget_mat(offset: Vec2, scl: Vec2, rot: f32) -> Mat3 {
+        let mut result = mat3ex::translate(offset);
+        if !approx_eq(rot, 0.) {
+            result = result * mat3ex::rotate_around(offset, rot);
         }
         if !vec2_approx_eq(scl, vec2(1., 1.)) {
-            result = result * mat3::scale_around(offset, scl);
+            result = result * mat3ex::scale_around(offset, scl);
         }
         result
     }
@@ -425,7 +425,7 @@ mod internal {
                 widget.runtime_info.size = vec2(width, height);
                 widget.runtime_info.wvp = frame.wvp * calc_widget_mat(vec2(x, y),
                                                                       widget.scl, widget.rot);
-                widget.runtime_info.wvp_inverse = widget.runtime_info.wvp.invert().unwrap();
+                widget.runtime_info.wvp_inverse = widget.runtime_info.wvp.inverse();
                 true
             } else {
                 false
@@ -455,12 +455,13 @@ mod internal {
             match parent_widget {
                 Some(parent_actual) => {
                     let mut m = parent_actual.runtime_info.wvp_inverse;
-                    m.z[0] = 0.;
-                    m.z[1] = 0.;
+                    m.z_axis.x = 0.;
+                    m.z_axis.y = 0.;
                     m
                 },
                 None => {
-                    mat3::scale(vec2(ctx.canvas_size.x / 2.0, ctx.canvas_size.y / 2.0))
+                    Mat3::from_scale(
+                        vec3(ctx.canvas_size.x / 2.0, ctx.canvas_size.y / 2.0, 1.))
                 }
             }
         };
@@ -538,7 +539,7 @@ mod internal {
                 let (width, height) = canvas.actual_size(&*window_info);
 
                 let frame = WidgetFrame {
-                    wvp: mat3::ortho(0., width, 0., height), // Map (0,0)->(width,height) to NDC
+                    wvp: mat3ex::ortho(0., width, 0., height), // Map (0,0)->(width,height) to NDC
                     size: vec2(width, height)
                 };
 
@@ -686,8 +687,9 @@ mod internal {
             if let Some(image) = ctx.image_read.get(entity) {
                 let widget = ctx.widget_vec.get(entity).unwrap();
                 // 这里再乘一个 size 把 [0,1] 的顶点坐标缩放
-                let wvp = widget.runtime_info.wvp * mat3::scale(widget.runtime_info.size);
-                let final_wvp = mat3::extend_to_mat4(&wvp);
+                let wvp = widget.runtime_info.wvp *
+                    Mat3::from_scale(widget.runtime_info.size.extend(1.));
+                let final_wvp = mat3ex::extend_to_mat4(&wvp);
 
                 ctx.batcher.batch(widget.runtime_info.draw_idx, DrawInstance::Image {
                     sprite: image.sprite.clone(),
@@ -774,7 +776,7 @@ mod internal {
             if let Some(text) = ctx.text_read.get(entity) {
                 let widget = ctx.widget_vec.get(entity).unwrap();
                 let wvp = widget.runtime_info.wvp;
-                let final_wvp = mat3::extend_to_mat4(&wvp) * Mat4::from_nonuniform_scale(1.0, -1.0, 1.0);
+                let final_wvp = mat3ex::extend_to_mat4(&wvp) * Mat4::from_scale(vec3(1.0, -1.0, 1.0));
 
                 ctx.batcher.batch(widget.runtime_info.draw_idx, DrawInstance::Text {
                     wvp: final_wvp,
@@ -978,10 +980,10 @@ mod internal {
                             image_data.default_material.set("u_sampler", MatProperty::TextureSampler(texture));
 
                             let instances = [ImageInstanceData {
-                                i_wvp_c0: wvp.x.into(),
-                                i_wvp_c1: wvp.y.into(),
-                                i_wvp_c2: wvp.z.into(),
-                                i_wvp_c3: wvp.w.into(),
+                                i_wvp_c0: wvp.x_axis.into(),
+                                i_wvp_c1: wvp.y_axis.into(),
+                                i_wvp_c2: wvp.z_axis.into(),
+                                i_wvp_c3: wvp.w_axis.into(),
                                 i_uv_min: [uv0.x, uv0.y],
                                 i_uv_max: [uv1.x, uv1.y],
                                 i_color: color.into(),
@@ -1025,7 +1027,7 @@ mod internal {
                             font_data.glyph_brush_ui.draw_queued_with_transform(
                                 &wgpu_state.device, &mut self.text_staging_belt, &mut encoder,
                                 &wgpu_state.frame_texture.as_ref().unwrap().output.view,
-                                mat::to_array(wvp)).expect("Render text failed");
+                                wvp.to_cols_array()).expect("Render text failed");
                         }
                     }
                 }

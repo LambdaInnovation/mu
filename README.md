@@ -19,8 +19,11 @@
 無 means **non-existent** in Chinese and is pronounced 'mu' in Japanese. As its name suggests, it tries to
 minimize development friction as much as possible by providing a simple and usable environment for game developer.
 
+The project is in its very early developement phase.
+
 # 依赖 Dependencies
 
+* glam for math operation
 * specs for ECS
 * wgpu for rendering
 * winit for window creation
