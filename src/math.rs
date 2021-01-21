@@ -5,8 +5,6 @@ use std::ops::{Div, Mul, Sub, Add};
 
 pub use glam::*;
 
-pub type Perspective = cgmath::PerspectiveFov<f32>;
-
 pub const PI: f32 = consts::PI;
 pub const DEG_2_RAD: f32 = PI / 180.0;
 pub const RAD_2_DEG: f32 = 180.0 / PI;
