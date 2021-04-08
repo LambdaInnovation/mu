@@ -1,5 +1,7 @@
 # 無(μ) Engine
 
+> 项目开发目前暂停。考虑到设计初衷和 [bevy engine][bevy] 高度重合，且个人无法全职开发引擎，该引擎长期来看的发展价值较小。
+
 無引擎是一个基于Rust的游戏引擎。無字日语音mu，mu又可表示希腊字母μ，有微小乃至不存在之意。
 
 正如其名，無引擎希望**最小化**用户创建游戏内容的阻力，给用户提供一个干净、简洁、易用的游戏开发环境。
@@ -29,3 +31,5 @@ The project is in its very early developement phase.
 * winit for window creation
 * imgui for editor UI
 * ... TODO: fill-in
+
+[bevy]: https://github.com/bevyengine/bevy
